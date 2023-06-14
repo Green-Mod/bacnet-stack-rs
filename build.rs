@@ -16,6 +16,10 @@ fn main() {
         .flag("-Wno-unused-parameter")
         .flag("-Wno-unused-but-set-variable")
         .flag("-Wno-self-assign")
+        .file(libdir_path.join("ports/bsd/bip-init.c"))
+        .file(libdir_path.join("ports/bsd/bip6.c"))
+        .file(libdir_path.join("ports/bsd/datetime-init.c"))
+        .file(libdir_path.join("ports/bsd/mstimer-init.c"))
         .file(libdir_path.join("bacnet/abort.c"))
         .file(libdir_path.join("bacnet/access_rule.c"))
         .file(libdir_path.join("bacnet/alarm_ack.c"))
@@ -203,10 +207,6 @@ fn main() {
         .file(libdir_path.join("bacnet/basic/service/s_wpm.c"))
         .file(libdir_path.join("bacnet/basic/tsm/tsm.c"))
         // .file(libdir_path.join("bacnet/basic/ucix/ucix.c"))
-        .file(libdir_path.join("ports/bsd/bip-init.c"))
-        .file(libdir_path.join("ports/bsd/bip6.c"))
-        .file(libdir_path.join("ports/bsd/datetime-init.c"))
-        .file(libdir_path.join("ports/bsd/mstimer-init.c"))
         .compile("bacnetstack");
 
     // This is the path to the `c` headers file.

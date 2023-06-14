@@ -1,3 +1,6 @@
+#include "ports/bsd/bacport.h"
+#include "ports/bsd/stdbool.h"
+
 #include "bacnet/abort.h"
 #include "bacnet/access_rule.h"
 #include "bacnet/alarm_ack.h"
@@ -203,5 +206,3 @@
 #include "bacnet/basic/tsm/tsm.h"
 
 #include "bacnet/basic/ucix/ucix.h"
-
-
