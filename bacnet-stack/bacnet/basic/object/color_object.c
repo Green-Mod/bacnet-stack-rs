@@ -40,7 +40,7 @@
 #include "../services.h"
 #include "../sys/keylist.h"
 /* me! */
-#include "../../color_object.h"
+#include "color_object.h"
 
 struct object_data {
     bool Changed : 1;

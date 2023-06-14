@@ -40,7 +40,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
-#include "../../sbuf.h"
+#include "sbuf.h"
 
 void sbuf_init(STATIC_BUFFER *b, /* static buffer structure */
     char *data, /* data block */

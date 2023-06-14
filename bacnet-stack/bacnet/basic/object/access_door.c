@@ -34,7 +34,7 @@
 #include "../../bacapp.h"
 #include "../../config.h" /* the custom stuff */
 #include "../../wp.h"
-#include "../../access_door.h"
+#include "access_door.h"
 #include "../services.h"
 
 static bool Access_Door_Initialized = false;

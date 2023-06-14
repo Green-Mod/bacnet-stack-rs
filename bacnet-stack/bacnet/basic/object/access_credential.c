@@ -35,7 +35,7 @@
 #include "../../bacapp.h"
 #include "../../config.h" /* the custom stuff */
 #include "../../wp.h"
-#include "../object/access_credential.h"
+#include "access_credential.h"
 #include "../services.h"
 
 static bool Access_Credential_Initialized = false;

@@ -53,7 +53,7 @@
 #include "../services.h"
 #include "../sys/keylist.h"
 /* me! */
-#include "../../mso.h"
+#include "mso.h"
 
 struct object_data {
     bool Out_Of_Service : 1;

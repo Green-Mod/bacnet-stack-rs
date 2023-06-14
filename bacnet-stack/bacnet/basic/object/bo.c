@@ -53,7 +53,7 @@
 #include "../services.h"
 #include "../sys/keylist.h"
 /* me! */
-#include "../../bo.h"
+#include "bo.h"
 
 static const char *Default_Active_Text = "Active";
 static const char *Default_Inactive_Text = "Inactive";

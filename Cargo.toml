@@ -4,3 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+
+[build-dependencies]
+bindgen = "0"
+cc = { version = "1.0", features = ["parallel"] }

@@ -34,7 +34,7 @@
 #include "../../bacapp.h"
 #include "../../config.h" /* the custom stuff */
 #include "../../wp.h"
-#include "../../access_rights.h"
+#include "access_rights.h"
 #include "../services.h"
 
 static bool Access_Rights_Initialized = false;

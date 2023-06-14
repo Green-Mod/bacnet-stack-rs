@@ -52,8 +52,8 @@
 #include <stdio.h>
 #endif
 #include "mstp.h"
-#include "../crc.h"
-#include "../rs485.h"
+#include "crc.h"
+#include "../../ports/linux/rs485.h"
 #include "mstptext.h"
 #include "../npdu.h"
 

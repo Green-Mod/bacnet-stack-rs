@@ -34,7 +34,7 @@
 #include "../../bacapp.h"
 #include "../../config.h" /* the custom stuff */
 #include "../../wp.h"
-#include "../../access_point.h"
+#include "access_point.h"
 #include "../services.h"
 
 static bool Access_Point_Initialized = false;
