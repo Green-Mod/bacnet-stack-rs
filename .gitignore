@@ -1,4 +1,6 @@
 /target
 /Cargo.lock
 .env
-/src/main.rs
+# Avoid all .rs files in the src directory except for lib.rs
+/src/*
+!/src/lib.rs
