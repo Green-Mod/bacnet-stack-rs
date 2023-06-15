@@ -1,7 +1,11 @@
+use std::ffi::CStr;
+
 use bacnet_stack_rs::*;
 
 const LOCAL_PORT: u16 = 47808;
 const INSTANCE_NUMBER: u32 = 1231;
+const OBJECT_TYPE: BACNET_OBJECT_TYPE = BACnetObjectType_OBJECT_ANALOG_INPUT;
+const OBJECT_INSTANCE: u32 = 0;
 
 fn main() {
     unsafe {
@@ -99,6 +103,12 @@ fn main() {
         address_init();
         dlenv_init();
 
+        bacnet_task_init();
+        bacnet_data_poll_seconds_set(5);
+        if !bacnet_data_object_add(INSTANCE_NUMBER, OBJECT_TYPE, OBJECT_INSTANCE) {
+            panic!("Failed to add object");
+        }
+
         Send_I_Am(&mut Handler_Transmit_Buffer[0]);
 
         let mut rx_buf: [u8; MAX_MPDU as usize] = [0; MAX_MPDU as usize];
@@ -111,10 +121,33 @@ fn main() {
             net: 0,
         };
 
+        let mut float_value: f32 = 0.0;
+
         loop {
+            bacnet_task();
+
+            if bacnet_data_analog_present_value(
+                INSTANCE_NUMBER,
+                OBJECT_TYPE,
+                OBJECT_INSTANCE,
+                &mut float_value,
+            ) {
+                println!(
+                    "Device {} {}-{}={}",
+                    INSTANCE_NUMBER,
+                    CStr::from_ptr(bactext_object_type_name(OBJECT_TYPE))
+                        .to_str()
+                        .unwrap(),
+                    OBJECT_INSTANCE,
+                    float_value
+                );
+            }
+
             let pdu_len = bip_receive(&mut src, &mut rx_buf[0], MAX_MPDU as u16, 1000);
 
             if pdu_len > 0 {
+                println!("Received {:?} bytes", rx_buf);
+                // apdu_handler(&mut src, &mut rx_buf[0], pdu_len);
                 npdu_handler(&mut src, &mut rx_buf[0], pdu_len);
             }
 

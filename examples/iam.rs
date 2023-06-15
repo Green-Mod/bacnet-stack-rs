@@ -51,8 +51,6 @@ fn main() {
 
         println!("{:?}", dest);
 
-        address_add(1000, MAX_APDU, &mut dest);
-
         Device_Set_Object_Instance_Number(INSTANCE_NUMBER);
         println!("BACnet Device ID: {}", Device_Object_Instance_Number());
 
@@ -116,13 +114,17 @@ fn main() {
 
         Send_I_Am_To_Network(
             &mut dest,
-            9,
-            480,
+            Device_Object_Instance_Number(),
+            MAX_APDU,
             BACNET_SEGMENTATION_SEGMENTATION_NONE as i32,
             BACNET_VENDOR_ID as u16,
         );
 
         loop {
+            if ERROR_DETECTED {
+                break;
+            }
+
             let pdu_len = bip_receive(&mut src, &mut rx_buf[0], MAX_MPDU as u16, 1000);
 
             if pdu_len > 0 {
@@ -130,16 +132,12 @@ fn main() {
                 npdu_handler(&mut src, &mut rx_buf[0], pdu_len);
             }
 
-            if ERROR_DETECTED {
-                break;
-            }
-
             if SHOULD_SEND_I_AM {
                 SHOULD_SEND_I_AM = false;
                 Send_I_Am_To_Network(
                     &mut src,
-                    9,
-                    480,
+                    Device_Object_Instance_Number(),
+                    MAX_APDU,
                     BACNET_SEGMENTATION_SEGMENTATION_NONE as i32,
                     BACNET_VENDOR_ID as u16,
                 );

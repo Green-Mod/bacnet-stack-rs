@@ -97,13 +97,15 @@ fn main() {
         apdu_set_abort_handler(Some(my_abort_handler));
         apdu_set_reject_handler(Some(my_reject_handler));
 
-        println!("Running on port {}", bip_get_port());
         bip_set_port(LOCAL_PORT);
         println!("Running on port {}", bip_get_port());
         address_init();
         dlenv_init();
 
         Send_WhoIs_To_Network(&mut dest, 1, BACNET_MAX_INSTANCE as i32);
+
+        // This should broadcast but doesn't seem to work
+        // Send_WhoIs(1, BACNET_MAX_INSTANCE as i32);
 
         let mut rx_buf: [u8; MAX_MPDU as usize] = [0; MAX_MPDU as usize];
 
@@ -116,15 +118,15 @@ fn main() {
         };
 
         loop {
+            if ERROR_DETECTED {
+                break;
+            }
+
             let pdu_len = bip_receive(&mut src, &mut rx_buf[0], MAX_MPDU as u16, 1000);
 
             if pdu_len > 0 {
                 // apdu_handler(&mut src, &mut rx_buf[0], pdu_len);
                 npdu_handler(&mut src, &mut rx_buf[0], pdu_len);
-            }
-
-            if ERROR_DETECTED {
-                break;
             }
         }
 
@@ -157,9 +159,9 @@ fn address_table_add(device_id: u32, max_apdu: u32, src: *mut BACNET_ADDRESS) {
         }
 
         ADDRESS_TABLE.push(AddressEntry {
-            flags: flags,
-            device_id: device_id,
-            max_apdu: max_apdu,
+            flags,
+            device_id,
+            max_apdu,
             address: *src,
         });
     }
