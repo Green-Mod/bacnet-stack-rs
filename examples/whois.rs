@@ -102,6 +102,9 @@ fn main() {
         address_init();
         dlenv_init();
 
+        // Broadcasted Who Is request only works for services on the same port
+        // Send_WhoIs(1, BACNET_MAX_INSTANCE as i32);
+
         Send_WhoIs_To_Network(&mut dest, 1, BACNET_MAX_INSTANCE as i32);
 
         // This should broadcast but doesn't seem to work

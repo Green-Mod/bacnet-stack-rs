@@ -102,6 +102,17 @@ fn main() {
         address_init();
         dlenv_init();
 
+        // Broadcasted I Am request only works for services on the same port
+        // Send_I_Am(&mut Handler_Transmit_Buffer[0]);
+
+        Send_I_Am_To_Network(
+            &mut dest,
+            Device_Object_Instance_Number(),
+            MAX_APDU,
+            BACNET_SEGMENTATION_SEGMENTATION_NONE as i32,
+            BACNET_VENDOR_ID as u16,
+        );
+
         let mut rx_buf: [u8; MAX_MPDU as usize] = [0; MAX_MPDU as usize];
 
         let mut src: BACNET_ADDRESS = BACNET_ADDRESS {
@@ -111,14 +122,6 @@ fn main() {
             mac: [0; 7],
             net: 0,
         };
-
-        Send_I_Am_To_Network(
-            &mut dest,
-            Device_Object_Instance_Number(),
-            MAX_APDU,
-            BACNET_SEGMENTATION_SEGMENTATION_NONE as i32,
-            BACNET_VENDOR_ID as u16,
-        );
 
         loop {
             if ERROR_DETECTED {
