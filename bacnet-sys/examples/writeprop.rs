@@ -59,29 +59,31 @@ fn main() {
     let mut target_object_property_value: [BACNET_APPLICATION_DATA_VALUE; MAX_PROPERTY_VALUES] =
         [BACNET_APPLICATION_DATA_VALUE::default(); MAX_PROPERTY_VALUES];
 
-    for i in 0..(args_remaining - 1) {
-        target_object_property_value[i].context_specific = false;
-        let property_tag: BACNET_APPLICATION_TAG = args[tag_value_arg].parse().unwrap();
-        tag_value_arg += 1;
-        args_remaining -= 1;
-        if args_remaining <= 0 {
-            panic!("Missing value for tag {}", property_tag);
-        }
-        let value_string = args[tag_value_arg].clone();
-        tag_value_arg += 1;
-        args_remaining -= 1;
-        if property_tag >= BACNET_APPLICATION_TAG_MAX_BACNET_APPLICATION_TAG as u32 {
-            panic!("Invalid tag {}", property_tag);
-        }
-        let status = unsafe {
-            bacapp_parse_application_data(
-                property_tag,
-                value_string.as_ptr() as *mut _,
-                &mut target_object_property_value[i],
-            )
-        };
-        if !status {
-            panic!("Error: unable to parse the tag value\n");
+    if args_remaining > 0 {
+        for i in 0..(args_remaining - 1) {
+            target_object_property_value[i].context_specific = false;
+            let property_tag: BACNET_APPLICATION_TAG = args[tag_value_arg].parse().unwrap();
+            tag_value_arg += 1;
+            args_remaining -= 1;
+            if args_remaining <= 0 {
+                panic!("Missing value for tag {}", property_tag);
+            }
+            let value_string = args[tag_value_arg].clone();
+            tag_value_arg += 1;
+            args_remaining -= 1;
+            if property_tag >= BACNET_APPLICATION_TAG_MAX_BACNET_APPLICATION_TAG as u32 {
+                panic!("Invalid tag {}", property_tag);
+            }
+            let status = unsafe {
+                bacapp_parse_application_data(
+                    property_tag,
+                    value_string.as_ptr() as *mut _,
+                    &mut target_object_property_value[i],
+                )
+            };
+            if !status {
+                panic!("Error: unable to parse the tag value\n");
+            }
         }
     }
 
