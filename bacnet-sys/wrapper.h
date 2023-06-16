@@ -1,5 +1,6 @@
 #define BACDL_ALL 1
 #define BACDL_BIP 1
+#define BACAPP_PRINT_ENABLED 1
 #include "bacnet-stack/src/bacnet/bactext.h"
 #include "bacnet-stack/src/bacnet/iam.h"
 #include "bacnet-stack/src/bacnet/basic/binding/address.h"

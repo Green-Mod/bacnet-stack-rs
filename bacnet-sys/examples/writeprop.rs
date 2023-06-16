@@ -2,6 +2,8 @@ use bacnet_sys::*;
 use std::env;
 use std::time::Instant;
 
+const MAX_PROPERTY_VALUES: usize = 64;
+
 fn main() {
     let mut src = BACNET_ADDRESS::default();
     let mut target_addr = BACNET_ADDRESS::default();
@@ -11,7 +13,7 @@ fn main() {
 
     if args.len() < 4 {
         println!(
-            "usage: {} <device-instance> <object-type> <object-instance> <property>",
+            "usage: {} <device-instance> <object-type> <object-instance> <property> <priority> <index> <tag> <value>",
             progname
         );
         std::process::exit(0);
@@ -43,6 +45,45 @@ fn main() {
             panic!("Unable to parse '{}' as a known object-property", args[3]);
         }
     };
+    let object_property_priority: u8 = args[4].parse().unwrap();
+    let object_property_index: i32 = args[5].parse().unwrap();
+    let object_property_index = if object_property_index < 0 {
+        BACNET_ARRAY_ALL
+    } else {
+        object_property_index as u32
+    };
+
+    let mut args_remaining = args.len() - 6;
+    let mut tag_value_arg = 6;
+
+    let mut target_object_property_value: [BACNET_APPLICATION_DATA_VALUE; MAX_PROPERTY_VALUES] =
+        [BACNET_APPLICATION_DATA_VALUE::default(); MAX_PROPERTY_VALUES];
+
+    for i in 0..(args_remaining - 1) {
+        target_object_property_value[i].context_specific = false;
+        let property_tag: BACNET_APPLICATION_TAG = args[tag_value_arg].parse().unwrap();
+        tag_value_arg += 1;
+        args_remaining -= 1;
+        if args_remaining <= 0 {
+            panic!("Missing value for tag {}", property_tag);
+        }
+        let value_string = args[tag_value_arg].clone();
+        tag_value_arg += 1;
+        args_remaining -= 1;
+        if property_tag >= BACNET_APPLICATION_TAG_MAX_BACNET_APPLICATION_TAG as u32 {
+            panic!("Invalid tag {}", property_tag);
+        }
+        let status = unsafe {
+            bacapp_parse_application_data(
+                property_tag,
+                value_string.as_ptr() as *mut _,
+                &mut target_object_property_value[i],
+            )
+        };
+        if !status {
+            panic!("Error: unable to parse the tag value\n");
+        }
+    }
 
     println!(
         "device-instance = {} object-type = {} object-instance = {} property = {}",
@@ -72,7 +113,6 @@ fn main() {
     let mut rx_buf = [0u8; MAX_MPDU as usize];
     let start = Instant::now();
     let mut request_invoke_id = 0;
-    let object_index = BACNET_ARRAY_ALL;
     loop {
         if !found {
             found =
@@ -82,12 +122,14 @@ fn main() {
         if found {
             if request_invoke_id == 0 {
                 request_invoke_id = unsafe {
-                    Send_Read_Property_Request(
+                    Send_Write_Property_Request(
                         device_instance,
                         object_type,
                         object_instance,
                         object_property,
-                        object_index,
+                        &mut target_object_property_value[0],
+                        object_property_priority,
+                        object_property_index,
                     )
                 }
             } else if unsafe { tsm_invoke_id_free(request_invoke_id) } {
@@ -185,6 +227,11 @@ extern "C" fn my_reject_handler(_: *mut BACNET_ADDRESS, invoke_id: u8, reject_re
     );
 }
 
+#[no_mangle]
+extern "C" fn my_property_simple_ack_handler(_: *mut BACNET_ADDRESS, _: u8) {
+    println!("WriteProperty Acknowledged!");
+}
+
 unsafe fn init_service_handlers() {
     Device_Init(std::ptr::null_mut());
     apdu_set_unconfirmed_handler(
@@ -200,9 +247,9 @@ unsafe fn init_service_handlers() {
         BACnet_Confirmed_Service_Choice_SERVICE_CONFIRMED_READ_PROPERTY,
         Some(handler_read_property),
     );
-    apdu_set_confirmed_ack_handler(
-        BACnet_Confirmed_Service_Choice_SERVICE_CONFIRMED_READ_PROPERTY,
-        Some(my_readprop_ack_handler),
+    apdu_set_confirmed_simple_ack_handler(
+        BACnet_Confirmed_Service_Choice_SERVICE_CONFIRMED_WRITE_PROPERTY,
+        Some(my_property_simple_ack_handler),
     );
 
     apdu_set_error_handler(

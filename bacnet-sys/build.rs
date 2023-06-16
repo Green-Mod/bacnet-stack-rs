@@ -20,7 +20,7 @@ fn main() {
         .define("BACNET_STACK_BUILD_APPS", "OFF")
         .define("BAC_ROUTING", "OFF") // not sure what this implies
         .define("BACNET_BUILD_PIFACE_APP", "OFF")
-        .define("BACNET_BUILD_PIFACE_APP", "OFF")
+        .define("BACAPP_PRINT_ENABLED", "ON")
         .define("BACDL_BIP", "ON")
         .define("BACDL_ETHERNET", "OFF")
         .build();
