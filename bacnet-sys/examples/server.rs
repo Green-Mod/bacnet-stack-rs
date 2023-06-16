@@ -1,6 +1,5 @@
 use bacnet_sys::*;
 
-const LOCAL_PORT: u16 = 47808;
 const INSTANCE_NUMBER: u32 = 1231;
 
 fn main() {
@@ -8,25 +7,7 @@ fn main() {
         Device_Set_Object_Instance_Number(INSTANCE_NUMBER);
         println!("BACnet Device ID: {}", Device_Object_Instance_Number());
 
-        Device_Init(&mut object_functions {
-            Object_Type: BACNET_OBJECT_TYPE::BITS,
-            Object_Init: None,
-            Object_Count: None,
-            Object_Index_To_Instance: None,
-            Object_Valid_Instance: None,
-            Object_Name: None,
-            Object_Read_Property: None,
-            Object_Write_Property: None,
-            Object_RPM_List: None,
-            Object_RR_Info: None,
-            Object_Iterator: None,
-            Object_Value_List: None,
-            Object_COV: None,
-            Object_COV_Clear: None,
-            Object_Intrinsic_Reporting: None,
-            Object_Add_List_Element: None,
-            Object_Remove_List_Element: None,
-        });
+        Device_Init(&mut object_functions::default());
 
         /* we need to handle who-is to support dynamic device binding */
         apdu_set_unconfirmed_handler(
@@ -94,22 +75,13 @@ fn main() {
             Some(handler_unconfirmed_private_transfer),
         );
 
-        bip_set_port(LOCAL_PORT);
-        println!("Running on port {}", bip_get_port());
         address_init();
         dlenv_init();
 
         Send_I_Am(&mut Handler_Transmit_Buffer[0]);
 
         let mut rx_buf: [u8; MAX_MPDU as usize] = [0; MAX_MPDU as usize];
-
-        let mut src: BACNET_ADDRESS = BACNET_ADDRESS {
-            adr: [0; 7],
-            mac_len: 0,
-            len: 0,
-            mac: [0; 7],
-            net: 0,
-        };
+        let mut src: BACNET_ADDRESS = BACNET_ADDRESS::default();
 
         loop {
             let pdu_len = bip_receive(&mut src, &mut rx_buf[0], MAX_MPDU as u16, 1000);

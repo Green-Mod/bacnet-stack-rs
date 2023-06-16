@@ -18,7 +18,7 @@ impl bindgen::callbacks::ParseCallbacks for IgnoreMacros {
 fn main() {
     let mut dir = cmake::Config::new("bacnet-stack")
         .define("BACNET_STACK_BUILD_APPS", "OFF")
-        //.define("BAC_ROUTING", "OFF") // not sure what this implies
+        .define("BAC_ROUTING", "OFF") // not sure what this implies
         .define("BACNET_BUILD_PIFACE_APP", "OFF")
         .define("BACNET_BUILD_PIFACE_APP", "OFF")
         .define("BACDL_BIP", "ON")

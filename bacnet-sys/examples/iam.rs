@@ -52,7 +52,6 @@ fn main() {
         Send_I_Am(&mut Handler_Transmit_Buffer[0]);
 
         let mut rx_buf: [u8; MAX_MPDU as usize] = [0; MAX_MPDU as usize];
-
         let mut src: BACNET_ADDRESS = BACNET_ADDRESS::default();
 
         loop {
