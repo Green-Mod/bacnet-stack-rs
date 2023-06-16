@@ -23,7 +23,7 @@ fn main() {
         let mut found_index = 0;
         if unsafe {
             bacnet_sys::bactext_object_type_strtol(
-                args[1].as_ptr() as *const i8,
+                args[1].as_ptr() as *const _,
                 &mut found_index as *mut _,
             )
         } {
@@ -39,7 +39,7 @@ fn main() {
         let mut found_index = 0;
         if unsafe {
             bacnet_sys::bactext_property_strtol(
-                args[3].as_ptr() as *const i8,
+                args[3].as_ptr() as *const _,
                 &mut found_index as *mut _,
             )
         } {
