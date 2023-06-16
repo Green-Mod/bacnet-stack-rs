@@ -11,6 +11,11 @@ fn main() {
     let mut dest = BACNET_ADDRESS::default();
     let target_object_instance_min = -1i32;
     let target_object_instance_max = -1i32;
+    let mut target_object_type = 0;
+    unsafe {
+        bactext_object_type_strtol("analog-input".as_ptr() as *const _, &mut target_object_type)
+    };
+    let target_object_instance = BACNET_MAX_INSTANCE;
 
     let a = BACNET_BROADCAST_NETWORK;
     println!("BACNET_BROADCAST_NETWORK={}", a);
@@ -27,24 +32,34 @@ fn main() {
     // init_service_handlers()
     unsafe {
         Device_Init(std::ptr::null_mut());
-        apdu_set_unrecognized_service_handler_handler(None);
+
+        /* we need to handle who-is
+        to support dynamic device binding to us */
+        apdu_set_unconfirmed_handler(
+            BACnet_Unconfirmed_Service_Choice_SERVICE_UNCONFIRMED_WHO_IS,
+            Some(handler_who_is),
+        );
+        /* set the handler for all the services we don't implement
+        It is required to send the proper reject message... */
+        apdu_set_unrecognized_service_handler_handler(Some(handler_unrecognized_service));
+        /* we must implement read property - it's required! */
         apdu_set_confirmed_handler(
             BACnet_Confirmed_Service_Choice_SERVICE_CONFIRMED_READ_PROPERTY,
             Some(handler_read_property),
         );
+        /* handle the reply (request) coming back */
         apdu_set_unconfirmed_handler(
-            BACnet_Unconfirmed_Service_Choice_SERVICE_UNCONFIRMED_I_AM,
-            Some(my_i_am_handler),
+            BACnet_Unconfirmed_Service_Choice_SERVICE_UNCONFIRMED_I_HAVE,
+            Some(handler_i_have),
         );
-
-        //apdu_set_abort_handler(
+        /* handle any errors coming back */
+        apdu_set_abort_handler(Some(my_abort_handler));
+        apdu_set_reject_handler(Some(my_reject_handler));
     }
-    //
-    //
+
     unsafe {
         address_init();
     }
-    //
     unsafe {
         dlenv_init();
     }
@@ -53,10 +68,11 @@ fn main() {
     let mut rx_buf = [0u8; MAX_MPDU as usize];
     let timeout = 100; // ms
     unsafe {
-        Send_WhoIs_To_Network(
-            &mut dest as *mut _,
+        Send_WhoHas_Object(
             target_object_instance_min,
             target_object_instance_max,
+            target_object_type,
+            target_object_instance,
         );
     }
     let start = Instant::now();
@@ -91,31 +107,17 @@ fn main() {
 }
 
 #[no_mangle]
-extern "C" fn my_i_am_handler(service_request: *mut u8, _: u16, src: *mut BACNET_ADDRESS) {
-    let mut device_id = 0;
-    let mut max_apdu = 0;
-    let mut segmentation = 0;
-    let mut vendor_id = 0;
-    let mut mac_addr = [0u8; 6];
-
-    let len = unsafe {
-        iam_decode_service_request(
-            service_request,
-            &mut device_id,
-            &mut max_apdu,
-            &mut segmentation,
-            &mut vendor_id,
-        )
-    };
-    if len == -1 {
-        println!("unable to decode I-Am request");
-        return;
-    }
+extern "C" fn my_abort_handler(_: *mut BACNET_ADDRESS, invoke_id: u8, abort_reason: u8, _: bool) {
     println!(
-        "device_id = {} max_apdu = {} vendor_id = {}",
-        device_id, max_apdu, vendor_id
+        "aborted invoke_id = {} abort_reason = {}",
+        invoke_id, abort_reason
     );
-    let mac_len = unsafe { (*src).mac_len } as usize;
-    mac_addr[..mac_len].copy_from_slice(unsafe { &(*src).mac[..mac_len] });
-    println!("MAC = {:02X?}", mac_addr);
+}
+
+#[no_mangle]
+extern "C" fn my_reject_handler(_: *mut BACNET_ADDRESS, invoke_id: u8, reject_reason: u8) {
+    println!(
+        "rejected invoke_id = {} reject_reason = {}",
+        invoke_id, reject_reason
+    );
 }
