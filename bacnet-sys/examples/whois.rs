@@ -1,6 +1,5 @@
-use std::time::Instant;
-
 use bacnet_sys::*;
+use std::time::Instant;
 
 fn main() {
     println!(

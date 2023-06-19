@@ -7,7 +7,7 @@ fn main() {
         Device_Set_Object_Instance_Number(INSTANCE_NUMBER);
         println!("BACnet Device ID: {}", Device_Object_Instance_Number());
 
-        Device_Init(&mut object_functions::default());
+        Device_Init(std::ptr::null_mut());
 
         /* we need to handle who-is to support dynamic device binding */
         apdu_set_unconfirmed_handler(
@@ -87,7 +87,6 @@ fn main() {
             let pdu_len = bip_receive(&mut src, &mut rx_buf[0], MAX_MPDU as u16, 1000);
 
             if pdu_len > 0 {
-                println!("Received {:?} bytes", rx_buf);
                 // apdu_handler(&mut src, &mut rx_buf[0], pdu_len);
                 npdu_handler(&mut src, &mut rx_buf[0], pdu_len);
             }

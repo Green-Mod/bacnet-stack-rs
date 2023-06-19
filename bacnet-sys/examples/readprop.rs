@@ -1,6 +1,5 @@
 use bacnet_sys::*;
-use std::env;
-use std::time::Instant;
+use std::{env, time::Instant};
 
 fn main() {
     let mut src = BACNET_ADDRESS::default();
@@ -100,11 +99,9 @@ fn main() {
                     break;
                 }
             }
-        } else {
-            if start.elapsed().as_secs() > 3 {
-                eprintln!("APDU timeout!");
-                break;
-            }
+        } else if start.elapsed().as_secs() > 3 {
+            eprintln!("APDU timeout!");
+            break;
         }
 
         let pdu_len = unsafe {

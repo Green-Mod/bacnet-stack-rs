@@ -1,6 +1,5 @@
 use bacnet_sys::*;
-use std::env;
-use std::time::Instant;
+use std::{env, time::Instant};
 
 const MAX_PROPERTY_VALUES: usize = 64;
 
@@ -53,25 +52,21 @@ fn main() {
         object_property_index as u32
     };
 
-    let mut args_remaining = args.len() - 6;
+    let args_remaining = args.len() - 6;
     let mut tag_value_arg = 6;
 
     let mut target_object_property_value: [BACNET_APPLICATION_DATA_VALUE; MAX_PROPERTY_VALUES] =
         [BACNET_APPLICATION_DATA_VALUE::default(); MAX_PROPERTY_VALUES];
 
     if args_remaining > 0 {
+        #[allow(clippy::needless_range_loop)]
         for i in 0..(args_remaining - 1) {
             target_object_property_value[i].context_specific = false;
             let property_tag: BACNET_APPLICATION_TAG = args[tag_value_arg].parse().unwrap();
             tag_value_arg += 1;
-            args_remaining -= 1;
-            if args_remaining <= 0 {
-                panic!("Missing value for tag {}", property_tag);
-            }
             let value_string = args[tag_value_arg].clone();
             tag_value_arg += 1;
-            args_remaining -= 1;
-            if property_tag >= BACNET_APPLICATION_TAG_MAX_BACNET_APPLICATION_TAG as u32 {
+            if property_tag >= BACNET_APPLICATION_TAG_MAX_BACNET_APPLICATION_TAG {
                 panic!("Invalid tag {}", property_tag);
             }
             let status = unsafe {
@@ -144,11 +139,9 @@ fn main() {
                     break;
                 }
             }
-        } else {
-            if start.elapsed().as_secs() > 3 {
-                eprintln!("APDU timeout!");
-                break;
-            }
+        } else if start.elapsed().as_secs() > 3 {
+            eprintln!("APDU timeout!");
+            break;
         }
 
         let pdu_len = unsafe {

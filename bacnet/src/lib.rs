@@ -1,27 +1,41 @@
-#![allow(unused_variables, unused_mut)] // XXX Remove
-#[macro_use]
-extern crate lazy_static;
-#[macro_use]
-extern crate log;
-#[macro_use]
-extern crate failure;
-
-use std::cmp::min;
-use std::collections::HashMap;
-use std::convert::TryInto;
-use std::ffi::CStr;
-use std::net::Ipv4Addr;
-use std::os::raw::c_char;
-use std::sync::{Mutex, Once};
-
-use bacnet_sys::address_remove_device;
-use failure::Fallible;
-
+use anyhow::{anyhow, bail, Result};
+use bacnet_sys::{
+    address_add, address_bind_request, address_remove_device, apdu_set_abort_handler,
+    apdu_set_confirmed_ack_handler, apdu_set_confirmed_handler, apdu_set_error_handler,
+    apdu_set_reject_handler, apdu_set_unconfirmed_handler,
+    apdu_set_unrecognized_service_handler_handler, bacapp_decode_application_data,
+    bacnet_address_same, bactext_abort_reason_name, bactext_application_tag_name,
+    bactext_binary_present_value_name, bactext_engineering_unit_name, bactext_error_class_name,
+    bactext_error_code_name, bactext_object_type_name, bactext_property_name, bip_receive,
+    bitstring_bit, bitstring_bits_used, dlenv_init, handler_i_am_bind, handler_read_property,
+    handler_unrecognized_service, handler_who_is, npdu_handler, property_list_special,
+    rp_ack_decode_service_request, special_property_list_t, tsm_invoke_id_failed,
+    tsm_invoke_id_free, BACnetObjectType_OBJECT_DEVICE, BACnetObjectType_OBJECT_PROPRIETARY_MIN,
+    BACnet_Confirmed_Service_Choice_SERVICE_CONFIRMED_READ_PROPERTY,
+    BACnet_Unconfirmed_Service_Choice_SERVICE_UNCONFIRMED_I_AM,
+    BACnet_Unconfirmed_Service_Choice_SERVICE_UNCONFIRMED_WHO_IS, Device_Init,
+    Send_Read_Property_Request, BACNET_ADDRESS, BACNET_APPLICATION_DATA_VALUE, BACNET_ARRAY_ALL,
+    BACNET_CONFIRMED_SERVICE_ACK_DATA, BACNET_ERROR_CLASS, BACNET_ERROR_CODE, BACNET_OBJECT_TYPE,
+    BACNET_PROPERTY_ID, BACNET_PROPERTY_ID_PROP_OBJECT_LIST, BACNET_PROPERTY_ID_PROP_PRESENT_VALUE,
+    BACNET_READ_PROPERTY_DATA, BACNET_STATUS_ERROR, MAX_APDU, MAX_ASHRAE_OBJECT_TYPE, MAX_MPDU,
+};
 pub use epics::Epics;
+use lazy_static::lazy_static;
+use log::{debug, error, info, log_enabled, warn};
+use std::{
+    cmp::min,
+    collections::HashMap,
+    ffi::CStr,
+    net::Ipv4Addr,
+    os::raw::c_char,
+    sync::{Mutex, Once},
+};
+use thiserror::Error;
 use value::BACnetValue;
 
 mod epics;
 pub mod value;
+pub mod whohas;
 pub mod whois;
 
 static BACNET_STACK_INIT: Once = Once::new();
@@ -54,21 +68,18 @@ enum RequestStatus {
     Error(BACnetErr), // Request failed
 }
 
-#[derive(Debug, Fail)]
+#[derive(Debug, Error)]
 pub enum BACnetErr {
     /// Request was rejected with the given reason code
-    #[fail(display = "Rejected: code {}", code)]
+    #[error("Rejected: code {code}")]
     Rejected { code: u8 }, // Rejected with the given reason code
 
     /// Request was aborted with the given reason code and text
-    #[fail(display = "Aborted: {} (code {})", text, code)]
+    #[error("Aborted: {text} (code {code})")]
     Aborted { text: String, code: u8 },
 
     /// Request resulted in an error
-    #[fail(
-        display = "Error: class={} ({}) {} ({})",
-        class_text, class, text, code
-    )]
+    #[error("Error: class={class_text} ({class}) {text} ({code})")]
     Error {
         class_text: String,
         class: u32,
@@ -84,9 +95,9 @@ pub enum BACnetErr {
 // an Option and read_prop() fishes it out. This means that read_prop() needs to acquire the mutex
 // twice for each data extraction, which seems like a really poor design.
 struct TargetDevice {
-    addr: bacnet_sys::BACNET_ADDRESS,
+    addr: BACNET_ADDRESS,
     request: Option<(RequestInvokeId, RequestStatus)>, // For tracking on-going an ongoing request
-    value: Option<Fallible<BACnetValue>>,              // TODO Build this into the 'request status'
+    value: Option<Result<BACnetValue>>,                // TODO Build this into the 'request status'
 }
 
 // As I understand the BACnet stack, it works by acting as another BACnet device on the network.
@@ -101,31 +112,30 @@ struct TargetDevice {
 pub struct BACnetDevice {
     pub device_id: u32,
     max_apdu: u32,
-    addr: bacnet_sys::BACNET_ADDRESS,
+    addr: BACNET_ADDRESS,
 }
 
-pub type ObjectType = bacnet_sys::BACNET_OBJECT_TYPE;
-pub type ObjectPropertyId = bacnet_sys::BACNET_PROPERTY_ID;
+pub type ObjectType = BACNET_OBJECT_TYPE;
+pub type ObjectPropertyId = BACNET_PROPERTY_ID;
 
 impl BACnetDevice {
     pub fn builder() -> BACnetDeviceBuilder {
         BACnetDeviceBuilder::default()
     }
 
-    pub fn connect(&mut self) -> Fallible<()> {
+    pub fn connect(&mut self) -> Result<()> {
         BACNET_STACK_INIT.call_once(|| unsafe {
             init_service_handlers();
-            bacnet_sys::dlenv_init();
+            dlenv_init();
         });
         // Add address
         unsafe {
-            bacnet_sys::address_add(self.device_id, bacnet_sys::MAX_APDU, &mut self.addr);
+            address_add(self.device_id, MAX_APDU, &mut self.addr);
         }
-        let mut target_addr = bacnet_sys::BACNET_ADDRESS::default();
+        let mut target_addr = BACNET_ADDRESS::default();
         // FIXME(tj): Wait until device is bound, or timeout
-        let found = unsafe {
-            bacnet_sys::address_bind_request(self.device_id, &mut self.max_apdu, &mut target_addr)
-        };
+        let found =
+            unsafe { address_bind_request(self.device_id, &mut self.max_apdu, &mut target_addr) };
         debug!("found = {}", found);
         if found {
             let mut lock = TARGET_ADDRESSES.lock().unwrap();
@@ -139,7 +149,7 @@ impl BACnetDevice {
             );
             Ok(())
         } else {
-            Err(format_err!("failed to bind to the device"))
+            Err(anyhow!("failed to bind to the device"))
         }
     }
 
@@ -150,11 +160,11 @@ impl BACnetDevice {
         &self,
         object_type: ObjectType,
         object_instance: u32,
-    ) -> Fallible<BACnetValue> {
+    ) -> Result<BACnetValue> {
         self.read_prop(
             object_type,
             object_instance,
-            bacnet_sys::BACNET_PROPERTY_ID_PROP_PRESENT_VALUE,
+            BACNET_PROPERTY_ID_PROP_PRESENT_VALUE,
         )
     }
 
@@ -166,13 +176,8 @@ impl BACnetDevice {
         object_type: ObjectType,
         object_instance: u32,
         property_id: ObjectPropertyId,
-    ) -> Fallible<BACnetValue> {
-        self.read_prop_at(
-            object_type,
-            object_instance,
-            property_id,
-            bacnet_sys::BACNET_ARRAY_ALL,
-        )
+    ) -> Result<BACnetValue> {
+        self.read_prop_at(object_type, object_instance, property_id, BACNET_ARRAY_ALL)
     }
 
     pub fn read_prop_at(
@@ -181,13 +186,13 @@ impl BACnetDevice {
         object_instance: u32,
         property_id: ObjectPropertyId,
         index: u32,
-    ) -> Fallible<BACnetValue> {
+    ) -> Result<BACnetValue> {
         let init = std::time::Instant::now();
         const TIMEOUT: u32 = 100;
         let request_invoke_id =
             if let Some(h) = TARGET_ADDRESSES.lock().unwrap().get_mut(&self.device_id) {
                 let request_invoke_id = unsafe {
-                    bacnet_sys::Send_Read_Property_Request(
+                    Send_Read_Property_Request(
                         self.device_id,
                         object_type,
                         object_instance,
@@ -198,33 +203,27 @@ impl BACnetDevice {
                 h.request = Some((request_invoke_id, RequestStatus::Ongoing));
                 request_invoke_id
             } else {
-                bail!("Not connected to device {}", self.device_id)
+                bail!("Not connected to device {}", self.device_id);
             };
 
-        let mut src = bacnet_sys::BACNET_ADDRESS::default();
-        let mut rx_buf = [0u8; bacnet_sys::MAX_MPDU as usize];
+        let mut src = BACNET_ADDRESS::default();
+        let mut rx_buf = [0u8; MAX_MPDU as usize];
         let start = std::time::Instant::now();
         loop {
             // TODO(tj): Consider pulling the "driving forward the internal state machine" stuff
             // into an inner method here. We need it for EPICS as well.
-            let pdu_len = unsafe {
-                bacnet_sys::bip_receive(
-                    &mut src,
-                    &mut rx_buf as *mut _,
-                    bacnet_sys::MAX_MPDU as u16,
-                    TIMEOUT,
-                )
-            };
+            let pdu_len =
+                unsafe { bip_receive(&mut src, &mut rx_buf as *mut _, MAX_MPDU as u16, TIMEOUT) };
             if pdu_len > 0 {
-                unsafe { bacnet_sys::npdu_handler(&mut src, &mut rx_buf as *mut _, pdu_len) }
+                unsafe { npdu_handler(&mut src, &mut rx_buf as *mut _, pdu_len) }
             }
 
             // FIXME(tj): Need to do tsm_invoke_id_free() and tsm_invoke_id_failed() in this loop
             // as well.
-            if unsafe { bacnet_sys::tsm_invoke_id_free(request_invoke_id) } {
+            if unsafe { tsm_invoke_id_free(request_invoke_id) } {
                 break;
             }
-            if unsafe { bacnet_sys::tsm_invoke_id_failed(request_invoke_id) } {
+            if unsafe { tsm_invoke_id_failed(request_invoke_id) } {
                 bail!("TSM timeout");
             }
 
@@ -242,7 +241,7 @@ impl BACnetDevice {
                 RequestStatus::Done => h
                     .value
                     .take()
-                    .unwrap_or_else(|| Err(format_err!("No value was extracted"))),
+                    .unwrap_or_else(|| Err(anyhow!("No value was extracted"))),
                 RequestStatus::Ongoing => panic!(
                     "attempting to extract a value, but the request is still marked as on-going"
                 ),
@@ -260,14 +259,14 @@ impl BACnetDevice {
     /// this function will simply walk over every single one and call `read_prop()` on it.
     pub fn read_properties(
         &self,
-        object_type: bacnet_sys::BACNET_OBJECT_TYPE,
+        object_type: BACNET_OBJECT_TYPE,
         object_instance: u32,
     ) -> HashMap<ObjectPropertyId, BACnetValue> {
-        let mut special_property_list = bacnet_sys::special_property_list_t::default();
+        let mut special_property_list = special_property_list_t::default();
 
         // Fetch all the properties that are known to be required here.
         unsafe {
-            bacnet_sys::property_list_special(object_type, &mut special_property_list);
+            property_list_special(object_type, &mut special_property_list);
         }
 
         let len = min(special_property_list.Required.count, 130);
@@ -276,10 +275,10 @@ impl BACnetDevice {
             let prop = unsafe { *special_property_list.Required.pList.offset(i as isize) } as u32;
 
             if log_enabled!(log::Level::Debug) {
-                let prop_name = cstr(unsafe { bacnet_sys::bactext_property_name(prop) });
+                let prop_name = cstr(unsafe { bactext_property_name(prop) });
                 debug!("Required property {} ({})", prop_name, prop);
             }
-            if prop == bacnet_sys::BACNET_PROPERTY_ID_PROP_OBJECT_LIST {
+            if prop == BACNET_PROPERTY_ID_PROP_OBJECT_LIST {
                 // This particular property we will not try to read in one go, instead we'll resort
                 // to reading it an item at a time.
                 continue;
@@ -317,7 +316,7 @@ impl BACnetDevice {
             let prop = unsafe { *special_property_list.Optional.pList.offset(i as isize) } as u32;
 
             if log_enabled!(log::Level::Debug) {
-                let prop_name = cstr(unsafe { bacnet_sys::bactext_property_name(prop) });
+                let prop_name = cstr(unsafe { bactext_property_name(prop) });
                 debug!("Optional property {} ({})", prop_name, prop);
             }
             match self.read_prop(object_type, object_instance, prop) {
@@ -363,16 +362,15 @@ impl BACnetDevice {
     }
 
     /// Scan the device for all available tags and produce an `Epics` object
-    pub fn epics(&self) -> Fallible<Epics> {
-        let device_props =
-            self.read_properties(bacnet_sys::BACnetObjectType_OBJECT_DEVICE, self.device_id);
+    pub fn epics(&self) -> Result<Epics> {
+        let device_props = self.read_properties(BACnetObjectType_OBJECT_DEVICE, self.device_id);
 
         // Read the object-list
         let len: u64 = self
             .read_prop_at(
-                bacnet_sys::BACnetObjectType_OBJECT_DEVICE,
+                BACnetObjectType_OBJECT_DEVICE,
                 self.device_id,
-                bacnet_sys::BACNET_PROPERTY_ID_PROP_OBJECT_LIST,
+                BACNET_PROPERTY_ID_PROP_OBJECT_LIST,
                 0,
             )?
             .try_into()?;
@@ -380,9 +378,9 @@ impl BACnetDevice {
         let mut object_ids = Vec::with_capacity(len as usize);
         for i in 2..len + 1 {
             match self.read_prop_at(
-                bacnet_sys::BACnetObjectType_OBJECT_DEVICE,
+                BACnetObjectType_OBJECT_DEVICE,
                 self.device_id,
-                bacnet_sys::BACNET_PROPERTY_ID_PROP_OBJECT_LIST,
+                BACNET_PROPERTY_ID_PROP_OBJECT_LIST,
                 i as u32,
             )? {
                 BACnetValue::ObjectId {
@@ -409,14 +407,14 @@ impl BACnetDevice {
         // Populate
         let device = device_props
             .into_iter()
-            .map(|(id, val)| (cstr(unsafe { bacnet_sys::bactext_property_name(id) }), val))
+            .map(|(id, val)| (cstr(unsafe { bactext_property_name(id) }), val))
             .collect::<HashMap<_, _>>();
 
         let object_list = objects
             .into_iter()
             .map(|obj| {
                 obj.into_iter()
-                    .map(|(id, val)| (cstr(unsafe { bacnet_sys::bactext_property_name(id) }), val))
+                    .map(|(id, val)| (cstr(unsafe { bactext_property_name(id) }), val))
                     .collect::<HashMap<_, _>>()
             })
             .collect::<Vec<_>>();
@@ -429,7 +427,7 @@ impl BACnetDevice {
 
     pub fn disconnect(&self) {
         unsafe {
-            bacnet_sys::address_remove_device(self.device_id);
+            address_remove_device(self.device_id);
         }
     }
 }
@@ -497,7 +495,7 @@ impl BACnetDeviceBuilder {
             port,
             device_id,
         } = self;
-        let mut addr = bacnet_sys::BACNET_ADDRESS::default();
+        let mut addr = BACNET_ADDRESS::default();
         addr.mac[..4].copy_from_slice(&ip.octets());
         addr.mac[4] = (port >> 8) as u8;
         addr.mac[5] = (port & 0xff) as u8;
@@ -518,22 +516,17 @@ impl BACnetDeviceBuilder {
 extern "C" fn my_readprop_ack_handler(
     service_request: *mut u8,
     service_len: u16,
-    src: *mut bacnet_sys::BACNET_ADDRESS,
-    service_data: *mut bacnet_sys::BACNET_CONFIRMED_SERVICE_ACK_DATA,
+    src: *mut BACNET_ADDRESS,
+    service_data: *mut BACNET_CONFIRMED_SERVICE_ACK_DATA,
 ) {
-    let mut data: bacnet_sys::BACNET_READ_PROPERTY_DATA =
-        bacnet_sys::BACNET_READ_PROPERTY_DATA::default();
+    let mut data: BACNET_READ_PROPERTY_DATA = BACNET_READ_PROPERTY_DATA::default();
 
     let invoke_id = unsafe { (*service_data).invoke_id };
     let mut lock = TARGET_ADDRESSES.lock().unwrap();
     if let Some(target) = find_matching_device(&mut lock, src, invoke_id) {
         // Decode the data
         let len = unsafe {
-            bacnet_sys::rp_ack_decode_service_request(
-                service_request,
-                service_len.into(),
-                &mut data as *mut _,
-            )
+            rp_ack_decode_service_request(service_request, service_len.into(), &mut data as *mut _)
         };
         if len >= 0 {
             // XXX Consider moving data decoding out. We should probably just stick to getting
@@ -542,22 +535,20 @@ extern "C" fn my_readprop_ack_handler(
             target.value = Some(decoded);
         } else {
             error!("<decode failed>");
-            target.value = Some(Err(format_err!("failed to decode data")));
+            target.value = Some(Err(anyhow!("failed to decode data")));
         }
         target.request = Some((invoke_id, RequestStatus::Done));
     }
 }
 
-fn decode_data(data: bacnet_sys::BACNET_READ_PROPERTY_DATA) -> Fallible<BACnetValue> {
-    let mut value = bacnet_sys::BACNET_APPLICATION_DATA_VALUE::default();
+fn decode_data(data: BACNET_READ_PROPERTY_DATA) -> Result<BACnetValue> {
+    let mut value = BACNET_APPLICATION_DATA_VALUE::default();
     let appdata = data.application_data;
     let appdata_len = data.application_data_len;
 
-    let len = unsafe {
-        bacnet_sys::bacapp_decode_application_data(appdata, appdata_len as u32, &mut value)
-    };
+    let len = unsafe { bacapp_decode_application_data(appdata, appdata_len as u32, &mut value) };
 
-    if len == bacnet_sys::BACNET_STATUS_ERROR {
+    if len == BACNET_STATUS_ERROR {
         bail!("decoding error");
     }
 
@@ -585,18 +576,17 @@ fn decode_data(data: bacnet_sys::BACNET_READ_PROPERTY_DATA) -> Fallible<BACnetVa
             //
             // FIXME(tj): Look at value.type_.Character_String.encoding
             let s = cstr(unsafe {
-                value.type_.Character_String.value[0..value.type_.Character_String.length as usize]
-                    .as_ptr()
+                value.type_.Character_String.value[0..value.type_.Character_String.length].as_ptr()
             });
             BACnetValue::String(s)
         }
         bacnet_sys::BACNET_APPLICATION_TAG_BACNET_APPLICATION_TAG_BIT_STRING => {
-            let nbits = unsafe { bacnet_sys::bitstring_bits_used(&mut value.type_.Bit_String) };
+            let nbits = unsafe { bitstring_bits_used(&mut value.type_.Bit_String) };
             // info!("Number of bits: {}", nbits);
 
             let mut bits = vec![];
             for i in 0..nbits {
-                let bit = unsafe { bacnet_sys::bitstring_bit(&mut value.type_.Bit_String, i) };
+                let bit = unsafe { bitstring_bit(&mut value.type_.Bit_String, i) };
                 bits.push(bit);
             }
 
@@ -615,28 +605,22 @@ fn decode_data(data: bacnet_sys::BACNET_READ_PROPERTY_DATA) -> Fallible<BACnetVa
             let s = match data.object_property {
                 bacnet_sys::BACNET_PROPERTY_ID_PROP_UNITS => {
                     if enum_val < 256 {
-                        Some(cstr(unsafe {
-                            bacnet_sys::bactext_engineering_unit_name(enum_val)
-                        }))
+                        Some(cstr(unsafe { bactext_engineering_unit_name(enum_val) }))
                     } else {
                         None
                     }
                 }
                 bacnet_sys::BACNET_PROPERTY_ID_PROP_OBJECT_TYPE => {
-                    if enum_val < bacnet_sys::MAX_ASHRAE_OBJECT_TYPE {
-                        Some(cstr(unsafe {
-                            bacnet_sys::bactext_object_type_name(enum_val)
-                        }))
+                    if enum_val < MAX_ASHRAE_OBJECT_TYPE {
+                        Some(cstr(unsafe { bactext_object_type_name(enum_val) }))
                     } else {
                         None // Either "reserved" or "proprietary"
                     }
                 }
                 bacnet_sys::BACNET_PROPERTY_ID_PROP_PRESENT_VALUE
                 | bacnet_sys::BACNET_PROPERTY_ID_PROP_RELINQUISH_DEFAULT => {
-                    if data.object_type < bacnet_sys::BACnetObjectType_OBJECT_PROPRIETARY_MIN {
-                        Some(cstr(unsafe {
-                            bacnet_sys::bactext_binary_present_value_name(enum_val)
-                        }))
+                    if data.object_type < BACnetObjectType_OBJECT_PROPRIETARY_MIN {
+                        Some(cstr(unsafe { bactext_binary_present_value_name(enum_val) }))
                     } else {
                         None
                     }
@@ -733,8 +717,7 @@ fn decode_data(data: bacnet_sys::BACNET_READ_PROPERTY_DATA) -> Fallible<BACnetVa
             }
         }
         _ => {
-            let tag_name =
-                cstr(unsafe { bacnet_sys::bactext_application_tag_name(value.tag as u32) });
+            let tag_name = cstr(unsafe { bactext_application_tag_name(value.tag as u32) });
             bail!("unhandled type tag {} ({:?})", tag_name, value.tag);
         }
     })
@@ -742,24 +725,25 @@ fn decode_data(data: bacnet_sys::BACNET_READ_PROPERTY_DATA) -> Fallible<BACnetVa
 
 #[no_mangle]
 extern "C" fn my_readpropmultiple_ack_handler(
-    service_request: u16,
-    src: *mut bacnet_sys::BACNET_ADDRESS,
-    service_data: *mut bacnet_sys::BACNET_CONFIRMED_SERVICE_ACK_DATA,
+    _: u16,
+    _: *mut BACNET_ADDRESS,
+    _: *mut BACNET_CONFIRMED_SERVICE_ACK_DATA,
 ) {
-    let mut data = bacnet_sys::BACNET_READ_ACCESS_DATA::default();
+    // TODO
+    unimplemented!();
 }
 
 #[no_mangle]
 extern "C" fn my_error_handler(
-    src: *mut bacnet_sys::BACNET_ADDRESS,
+    src: *mut BACNET_ADDRESS,
     invoke_id: u8,
-    error_class: bacnet_sys::BACNET_ERROR_CLASS,
-    error_code: bacnet_sys::BACNET_ERROR_CODE,
+    error_class: BACNET_ERROR_CLASS,
+    error_code: BACNET_ERROR_CODE,
 ) {
     let mut lock = TARGET_ADDRESSES.lock().unwrap();
     if let Some(target) = find_matching_device(&mut lock, src, invoke_id) {
-        let error_class_str = cstr(unsafe { bacnet_sys::bactext_error_class_name(error_class) });
-        let error_code_str = cstr(unsafe { bacnet_sys::bactext_error_code_name(error_code) });
+        let error_class_str = cstr(unsafe { bactext_error_class_name(error_class) });
+        let error_code_str = cstr(unsafe { bactext_error_code_name(error_code) });
         debug!(
             "BACnet error: error_class={} ({}) error_code={} ({})",
             error_class, error_class_str, error_code, error_code_str,
@@ -776,7 +760,7 @@ extern "C" fn my_error_handler(
 
 #[no_mangle]
 extern "C" fn my_abort_handler(
-    src: *mut bacnet_sys::BACNET_ADDRESS,
+    src: *mut BACNET_ADDRESS,
     invoke_id: u8,
     abort_reason: u8,
     server: bool,
@@ -785,8 +769,7 @@ extern "C" fn my_abort_handler(
     let _ = src;
     let mut lock = TARGET_ADDRESSES.lock().unwrap();
     if let Some(target) = find_matching_device(&mut lock, src, invoke_id) {
-        let abort_text =
-            cstr(unsafe { bacnet_sys::bactext_abort_reason_name(abort_reason as u32) });
+        let abort_text = cstr(unsafe { bactext_abort_reason_name(abort_reason as u32) });
         debug!(
             "aborted invoke_id = {} abort_reason = {} ({})",
             invoke_id, abort_text, abort_reason
@@ -800,11 +783,7 @@ extern "C" fn my_abort_handler(
 }
 
 #[no_mangle]
-extern "C" fn my_reject_handler(
-    src: *mut bacnet_sys::BACNET_ADDRESS,
-    invoke_id: u8,
-    reject_reason: u8,
-) {
+extern "C" fn my_reject_handler(src: *mut BACNET_ADDRESS, invoke_id: u8, reject_reason: u8) {
     let _ = src;
 
     let mut lock = TARGET_ADDRESSES.lock().unwrap();
@@ -830,11 +809,11 @@ fn cstr(ptr: *const c_char) -> String {
 // This function _should_ return something.
 fn find_matching_device<'a>(
     guard: &'a mut std::sync::MutexGuard<'_, HashMap<u32, TargetDevice>>,
-    src: *mut bacnet_sys::BACNET_ADDRESS,
+    src: *mut BACNET_ADDRESS,
     invoke_id: RequestInvokeId,
 ) -> Option<&'a mut TargetDevice> {
     for target in guard.values_mut() {
-        let is_addr_match = unsafe { bacnet_sys::bacnet_address_same(&mut target.addr, src) };
+        let is_addr_match = unsafe { bacnet_address_same(&mut target.addr, src) };
         if let Some((request_invoke_id, _)) = &target.request {
             let is_request_invoke_id = invoke_id == *request_invoke_id;
             if is_addr_match && is_request_invoke_id {
@@ -843,35 +822,33 @@ fn find_matching_device<'a>(
         }
     }
     error!("device wasn't matched! {:?}", src);
-    return None;
+    None
 }
 
 unsafe fn init_service_handlers() {
-    bacnet_sys::Device_Init(std::ptr::null_mut());
-    bacnet_sys::apdu_set_unconfirmed_handler(
-        bacnet_sys::BACnet_Unconfirmed_Service_Choice_SERVICE_UNCONFIRMED_WHO_IS,
-        Some(bacnet_sys::handler_who_is),
+    Device_Init(std::ptr::null_mut());
+    apdu_set_unconfirmed_handler(
+        BACnet_Unconfirmed_Service_Choice_SERVICE_UNCONFIRMED_WHO_IS,
+        Some(handler_who_is),
     );
-    bacnet_sys::apdu_set_unconfirmed_handler(
-        bacnet_sys::BACnet_Unconfirmed_Service_Choice_SERVICE_UNCONFIRMED_I_AM,
-        Some(bacnet_sys::handler_i_am_bind),
+    apdu_set_unconfirmed_handler(
+        BACnet_Unconfirmed_Service_Choice_SERVICE_UNCONFIRMED_I_AM,
+        Some(handler_i_am_bind),
     );
-    bacnet_sys::apdu_set_unrecognized_service_handler_handler(Some(
-        bacnet_sys::handler_unrecognized_service,
-    ));
-    bacnet_sys::apdu_set_confirmed_handler(
-        bacnet_sys::BACnet_Confirmed_Service_Choice_SERVICE_CONFIRMED_READ_PROPERTY,
-        Some(bacnet_sys::handler_read_property),
+    apdu_set_unrecognized_service_handler_handler(Some(handler_unrecognized_service));
+    apdu_set_confirmed_handler(
+        BACnet_Confirmed_Service_Choice_SERVICE_CONFIRMED_READ_PROPERTY,
+        Some(handler_read_property),
     );
-    bacnet_sys::apdu_set_confirmed_ack_handler(
-        bacnet_sys::BACnet_Confirmed_Service_Choice_SERVICE_CONFIRMED_READ_PROPERTY,
+    apdu_set_confirmed_ack_handler(
+        BACnet_Confirmed_Service_Choice_SERVICE_CONFIRMED_READ_PROPERTY,
         Some(my_readprop_ack_handler),
     );
 
-    bacnet_sys::apdu_set_error_handler(
-        bacnet_sys::BACnet_Confirmed_Service_Choice_SERVICE_CONFIRMED_READ_PROPERTY,
+    apdu_set_error_handler(
+        BACnet_Confirmed_Service_Choice_SERVICE_CONFIRMED_READ_PROPERTY,
         Some(my_error_handler),
     );
-    bacnet_sys::apdu_set_abort_handler(Some(my_abort_handler));
-    bacnet_sys::apdu_set_reject_handler(Some(my_reject_handler));
+    apdu_set_abort_handler(Some(my_abort_handler));
+    apdu_set_reject_handler(Some(my_reject_handler));
 }

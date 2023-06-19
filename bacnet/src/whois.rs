@@ -1,6 +1,6 @@
 //! A highlevel interface to bacnet-sys discovery (Who-Is) functionality
 //!
-//! Design is like a builder with different parameters and retursn
+//! Design is like a builder with different parameters and returns
 
 // So the design of the BACnet stack is a little annoying in that we have to drive the subsystem
 // forward, continually called bip_receive(). Each device that's discovered is processed by the
@@ -9,8 +9,22 @@
 // In effect, this library is not thread-safe, so we need to make sure that only one WhoIs client
 // is running at a time.
 
-use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use anyhow::{bail, Result};
+use bacnet_sys::{
+    address_init, apdu_set_confirmed_handler, apdu_set_unconfirmed_handler,
+    apdu_set_unrecognized_service_handler_handler, bip_cleanup, bip_get_broadcast_address,
+    bip_receive, dlenv_init, handler_read_property, iam_decode_service_request, npdu_handler,
+    BACnet_Confirmed_Service_Choice_SERVICE_CONFIRMED_READ_PROPERTY,
+    BACnet_Unconfirmed_Service_Choice_SERVICE_UNCONFIRMED_I_AM, Device_Init,
+    Device_Set_Object_Instance_Number, Send_WhoIs_To_Network, BACNET_ADDRESS, BACNET_MAX_INSTANCE,
+    MAX_MPDU,
+};
+use lazy_static::lazy_static;
+use log::{debug, error};
+use std::{
+    sync::Mutex,
+    time::{Duration, Instant},
+};
 
 lazy_static! {
     /// A global list of discovered devices. The function my_i_am_handler() pushes discovered
@@ -56,7 +70,7 @@ impl WhoIs {
         self
     }
 
-    pub fn execute(self) -> Result<Vec<IAmDevice>, ()> {
+    pub fn execute(self) -> Result<Vec<IAmDevice>> {
         let WhoIs { timeout, subnet } = self;
 
         // create an object with a Drop impl that calls bip_cleanup
@@ -65,7 +79,7 @@ impl WhoIs {
         let devices = if let Ok(mut lock) = DISCOVERED_DEVICES.lock() {
             lock.drain(..).collect()
         } else {
-            vec![] // TODO(tj): Err here
+            bail!("unable to lock DISCOVERED_DEVICES");
         };
 
         Ok(devices)
@@ -82,18 +96,14 @@ impl Default for WhoIs {
 }
 
 #[no_mangle]
-extern "C" fn i_am_handler(
-    service_request: *mut u8,
-    _service_len: u16,
-    src: *mut bacnet_sys::BACNET_ADDRESS,
-) {
+extern "C" fn i_am_handler(service_request: *mut u8, _service_len: u16, src: *mut BACNET_ADDRESS) {
     let mut device_id = 0;
     let mut max_apdu = 0;
     let mut segmentation = 0;
     let mut vendor_id = 0;
 
     let len = unsafe {
-        bacnet_sys::iam_decode_service_request(
+        iam_decode_service_request(
             service_request,
             &mut device_id,
             &mut max_apdu,
@@ -136,7 +146,7 @@ extern "C" fn i_am_handler(
 // TODO(tj): Handle duplicates. A duplicate is pretty much a device ID we've already seen, from
 // what I understand.
 fn whois(timeout: Duration, subnet: Option<u16>) {
-    let mut dest = bacnet_sys::BACNET_ADDRESS::default();
+    let mut dest = BACNET_ADDRESS::default();
     let target_object_instance_min = -1i32; // TODO(tj): parameterize?
     let target_object_instance_max = -1i32; // TODO(tj): parameterize?
 
@@ -144,36 +154,36 @@ fn whois(timeout: Duration, subnet: Option<u16>) {
         dest.net = subnet;
     } else {
         unsafe {
-            bacnet_sys::bip_get_broadcast_address(&mut dest as *mut _);
+            bip_get_broadcast_address(&mut dest as *mut _);
         }
     }
 
     unsafe {
-        bacnet_sys::Device_Set_Object_Instance_Number(bacnet_sys::BACNET_MAX_INSTANCE);
+        Device_Set_Object_Instance_Number(BACNET_MAX_INSTANCE);
         // service handlers
-        bacnet_sys::Device_Init(std::ptr::null_mut());
-        bacnet_sys::apdu_set_unrecognized_service_handler_handler(None);
-        bacnet_sys::apdu_set_confirmed_handler(
-            bacnet_sys::BACnet_Confirmed_Service_Choice_SERVICE_CONFIRMED_READ_PROPERTY,
-            Some(bacnet_sys::handler_read_property),
+        Device_Init(std::ptr::null_mut());
+        apdu_set_unrecognized_service_handler_handler(None);
+        apdu_set_confirmed_handler(
+            BACnet_Confirmed_Service_Choice_SERVICE_CONFIRMED_READ_PROPERTY,
+            Some(handler_read_property),
         );
-        bacnet_sys::apdu_set_unconfirmed_handler(
-            bacnet_sys::BACnet_Unconfirmed_Service_Choice_SERVICE_UNCONFIRMED_I_AM,
+        apdu_set_unconfirmed_handler(
+            BACnet_Unconfirmed_Service_Choice_SERVICE_UNCONFIRMED_I_AM,
             Some(i_am_handler),
         );
 
         // FIXME(tj): Set error handlers
         // apdu_set_abort_handler(MyAbortHandler);
         // apdu_set_reject_handler(MyRejectHandler);
-        bacnet_sys::address_init();
-        bacnet_sys::dlenv_init();
+        address_init();
+        dlenv_init();
     }
 
-    let mut src = bacnet_sys::BACNET_ADDRESS::default();
-    let mut rx_buf = [0u8; bacnet_sys::MAX_MPDU as usize];
+    let mut src = BACNET_ADDRESS::default();
+    let mut rx_buf = [0u8; MAX_MPDU as usize];
     let bip_timeout = 100; // ms
     unsafe {
-        bacnet_sys::Send_WhoIs_To_Network(
+        Send_WhoIs_To_Network(
             &mut dest as *mut _,
             target_object_instance_min,
             target_object_instance_max,
@@ -183,16 +193,16 @@ fn whois(timeout: Duration, subnet: Option<u16>) {
     let mut i = 0;
     while start.elapsed() < timeout {
         let pdu_len = unsafe {
-            bacnet_sys::bip_receive(
+            bip_receive(
                 &mut src as *mut _,
                 &mut rx_buf as *mut _,
-                bacnet_sys::MAX_MPDU as u16,
+                MAX_MPDU as u16,
                 bip_timeout,
             )
         };
         if pdu_len > 0 {
             unsafe {
-                bacnet_sys::npdu_handler(&mut src as *mut _, &mut rx_buf as *mut _, pdu_len);
+                npdu_handler(&mut src as *mut _, &mut rx_buf as *mut _, pdu_len);
             }
         }
 
@@ -201,6 +211,6 @@ fn whois(timeout: Duration, subnet: Option<u16>) {
     debug!("Looped {} times", i);
 
     unsafe {
-        bacnet_sys::bip_cleanup();
+        bip_cleanup();
     }
 }

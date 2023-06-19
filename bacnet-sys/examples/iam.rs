@@ -20,7 +20,7 @@ fn main() {
         Device_Set_Object_Instance_Number(INSTANCE_NUMBER);
         println!("BACnet Device ID: {}", Device_Object_Instance_Number());
 
-        Device_Init(&mut object_functions::default());
+        Device_Init(std::ptr::null_mut());
 
         /* we need to handle who-is
         to support dynamic device binding to us */

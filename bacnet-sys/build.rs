@@ -1,6 +1,4 @@
-use std::collections::HashSet;
-use std::env;
-use std::path::PathBuf;
+use std::{collections::HashSet, env, path::PathBuf};
 
 #[derive(Debug)]
 struct IgnoreMacros(HashSet<String>);
@@ -29,7 +27,7 @@ fn main() {
     // println!("cargo:warning={}", dir.display());
 
     println!("cargo:rustc-link-search=native={}", dir.display());
-    println!("cargo:rustc-link-lib=static={}", "bacnet-stack"); // libbacnet-stack.a
+    println!("cargo:rustc-link-lib=static=bacnet-stack"); // libbacnet-stack.a
 
     let ignored_macros = IgnoreMacros(
         vec![
@@ -39,6 +37,19 @@ fn main() {
             "FP_SUBNORMAL".into(),
             "FP_ZERO".into(),
             "IPPORT_RESERVED".into(),
+            "M_E".into(),
+            "M_LOG2E".into(),
+            "M_LOG10E".into(),
+            "M_LN2".into(),
+            "M_LN10".into(),
+            "M_PI".into(),
+            "M_PI_2".into(),
+            "M_PI_4".into(),
+            "M_1_PI".into(),
+            "M_2_PI".into(),
+            "M_2_SQRTPI".into(),
+            "M_SQRT2".into(),
+            "M_SQRT1_2".into(),
         ]
         .into_iter()
         .collect(),

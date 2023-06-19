@@ -3,6 +3,7 @@
 #define BACAPP_PRINT_ENABLED 1
 #include "bacnet-stack/src/bacnet/bactext.h"
 #include "bacnet-stack/src/bacnet/iam.h"
+#include "bacnet-stack/src/bacnet/ihave.h"
 #include "bacnet-stack/src/bacnet/basic/binding/address.h"
 #include "bacnet-stack/src/bacnet/config.h"
 #include "bacnet-stack/src/bacnet/bacdef.h"

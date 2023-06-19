@@ -2,6 +2,9 @@ extern crate bacnet;
 extern crate structopt;
 
 use bacnet::BACnetDevice;
+use bacnet_sys::{
+    bactext_object_type_strtol, bactext_property_strtol, BACNET_OBJECT_TYPE, BACNET_PROPERTY_ID,
+};
 use structopt::StructOpt;
 
 #[derive(StructOpt, Debug)]
@@ -19,7 +22,7 @@ struct Opt {
     port: u16,
 
     #[structopt(short = "t", long, default_value = "analog-value", parse(try_from_str = parse_object_type))]
-    object_type: bacnet_sys::BACNET_OBJECT_TYPE,
+    object_type: BACNET_OBJECT_TYPE,
     #[structopt(short = "i", long, default_value = "22")]
     object_instance: u32,
     #[structopt(short = "p", long, default_value = "present-value", parse(try_from_str = parse_property))]
@@ -31,13 +34,13 @@ struct Opt {
     number_of_reads: usize,
 }
 
-fn parse_object_type(src: &str) -> Result<bacnet_sys::BACNET_OBJECT_TYPE, String> {
+fn parse_object_type(src: &str) -> Result<BACNET_OBJECT_TYPE, String> {
     if let Ok(t) = src.parse() {
         Ok(t)
     } else {
         let mut found_index = 0;
         if unsafe {
-            bacnet_sys::bactext_object_type_strtol(
+            bactext_object_type_strtol(
                 src.as_ptr() as *const ::std::os::raw::c_char,
                 &mut found_index,
             )
@@ -49,13 +52,13 @@ fn parse_object_type(src: &str) -> Result<bacnet_sys::BACNET_OBJECT_TYPE, String
     }
 }
 
-fn parse_property(src: &str) -> Result<bacnet_sys::BACNET_PROPERTY_ID, String> {
+fn parse_property(src: &str) -> Result<BACNET_PROPERTY_ID, String> {
     if let Ok(t) = src.parse() {
         Ok(t)
     } else {
         let mut found_index = 0;
         if unsafe {
-            bacnet_sys::bactext_property_strtol(
+            bactext_property_strtol(
                 src.as_ptr() as *const ::std::os::raw::c_char,
                 &mut found_index,
             )
