@@ -75,6 +75,10 @@ fn main() {
             Some(handler_unconfirmed_private_transfer),
         );
 
+        // NOTE: We can add more objects here
+        Analog_Output_Create(2);
+        Binary_Output_Create(2);
+
         address_init();
         dlenv_init();
 
