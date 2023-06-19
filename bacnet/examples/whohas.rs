@@ -1,5 +1,5 @@
 use bacnet::whohas::WhoHas;
-use bacnet_sys::bactext_object_type_name;
+use bacnet_sys::{bactext_object_type_name, BACnetObjectType_OBJECT_ANALOG_INPUT};
 use std::ffi::{c_char, CStr};
 
 fn cstr(ptr: *const c_char) -> String {
@@ -11,6 +11,8 @@ fn cstr(ptr: *const c_char) -> String {
 fn main() {
     pretty_env_logger::init();
     let i_have_data = WhoHas::new()
+        .object_type(BACnetObjectType_OBJECT_ANALOG_INPUT)
+        .object_instance(0)
         .timeout(std::time::Duration::from_secs(1))
         .subnet(0)
         .execute()

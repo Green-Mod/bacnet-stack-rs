@@ -87,6 +87,18 @@ impl WhoHas {
         WhoHas::default()
     }
 
+    /// Set the object type to search for. Default: Device
+    pub fn object_type(mut self, object_type: ObjectType) -> Self {
+        self.object_type = object_type;
+        self
+    }
+
+    /// Set the object instance to search for. Default: 0
+    pub fn object_instance(mut self, object_instance: u32) -> Self {
+        self.object_instance = object_instance;
+        self
+    }
+
     /// Set the amount of time to wait for I-Am requests to come in (in millis). Default: 3000
     pub fn timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
