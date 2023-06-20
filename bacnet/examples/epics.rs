@@ -30,7 +30,6 @@ fn main() {
         .port(opt.port)
         .build();
 
-    println!("{:?}", dev);
     match dev.connect() {
         Ok(()) => match dev.epics() {
             Ok(epics) => {

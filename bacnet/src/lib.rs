@@ -108,7 +108,7 @@ struct TargetDevice {
 // possible) to the internal address cache. [sidenote: The MAX_ADDRESS_CACHE = 255, which I take to
 // mean that we can connect to at most 255 devices].
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct BACnetDevice {
     pub device_id: u32,
     max_apdu: u32,

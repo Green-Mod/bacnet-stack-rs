@@ -81,7 +81,6 @@ fn main() {
         .port(opt.port)
         .build();
 
-    println!("{:?}", dev);
     match dev.connect() {
         Ok(()) => {
             for _ in 0..opt.number_of_reads {
