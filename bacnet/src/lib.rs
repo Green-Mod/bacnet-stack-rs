@@ -258,7 +258,7 @@ impl BACnetDevice {
         &self,
         object_type: BACNET_OBJECT_TYPE,
         object_instance: u32,
-    ) -> HashMap<ObjectPropertyId, BACnetValue> {
+    ) -> Result<HashMap<ObjectPropertyId, BACnetValue>> {
         let mut special_property_list = special_property_list_t::default();
 
         // Fetch all the properties that are known to be required here.
@@ -301,7 +301,8 @@ impl BACnetDevice {
                             warn!("{}", bacnet_err);
                         }
                     } else {
-                        error!("Failed to get property {}", err);
+                        // Unknown error, return it
+                        return Err(err);
                     }
                 }
             }
@@ -348,19 +349,19 @@ impl BACnetDevice {
                             _ => debug!("{:?}", bacnet_err),
                         }
                     } else {
-                        // This is fine...
-                        debug!("Failed to get property {}", err);
+                        // Unknown error, return it
+                        return Err(err);
                     }
                 }
             }
         }
 
-        ret
+        Ok(ret)
     }
 
     /// Scan the device for all available tags and produce an `Epics` object
     pub fn epics(&self) -> Result<Epics> {
-        let device_props = self.read_properties(BACnetObjectType_OBJECT_DEVICE, self.device_id);
+        let device_props = self.read_properties(BACnetObjectType_OBJECT_DEVICE, self.device_id)?;
 
         // Read the object-list
         let len: u64 = self
@@ -396,7 +397,7 @@ impl BACnetDevice {
 
         let mut objects = Vec::with_capacity(len as usize);
         for (object_type, object_instance) in object_ids {
-            let object_props = self.read_properties(object_type, object_instance);
+            let object_props = self.read_properties(object_type, object_instance)?;
             objects.push(object_props);
         }
         debug!("Objects:\n{:#?}", objects);
