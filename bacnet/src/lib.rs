@@ -86,6 +86,26 @@ pub enum BACnetErr {
         text: String,
         code: u32,
     },
+
+    /// Device not connected
+    #[error("Not connected to device {device_id}")]
+    NotConnected { device_id: u32 },
+
+    /// TSM Timeout
+    #[error("TSM Timeout")]
+    TsmTimeout,
+
+    /// APDU Timeout
+    #[error("APDU Timeout")]
+    ApduTimeout,
+
+    /// Decoding failed
+    #[error("Decoding failed")]
+    DecodeFailed,
+
+    /// Unhandled tag type
+    #[error("Unhandled type tag {tag_name} ({tag:?})")]
+    UnhandledTag { tag_name: String, tag: u8 },
 }
 
 // A structure for tracking
@@ -203,7 +223,9 @@ impl BACnetDevice {
                 h.request = Some((request_invoke_id, RequestStatus::Ongoing));
                 request_invoke_id
             } else {
-                bail!("Not connected to device {}", self.device_id);
+                bail!(BACnetErr::NotConnected {
+                    device_id: self.device_id
+                });
             };
 
         let mut src = BACNET_ADDRESS::default();
@@ -222,11 +244,11 @@ impl BACnetDevice {
                 break;
             }
             if unsafe { tsm_invoke_id_failed(request_invoke_id) } {
-                bail!("TSM timeout");
+                bail!(BACnetErr::TsmTimeout);
             }
 
             if start.elapsed().as_secs() > 3 {
-                bail!("APDU timeout");
+                bail!(BACnetErr::ApduTimeout);
             }
         }
 
@@ -287,18 +309,20 @@ impl BACnetDevice {
                 }
                 Err(err) => {
                     if let Some(bacnet_err) = err.downcast_ref::<BACnetErr>() {
-                        // if bacnet_err is unknown property, just debug it and move on
-                        if matches!(
-                            bacnet_err,
+                        match bacnet_err {
+                            // If bacnet_err is unknown property, just debug it and move on
                             BACnetErr::Error {
-                                class: 2,
-                                code: 32,
-                                ..
+                                class: 2, code: 32, ..
+                            } => {
+                                debug!("{}", err);
                             }
-                        ) {
-                            debug!("{}", bacnet_err);
-                        } else {
-                            warn!("{}", bacnet_err);
+                            // If we get a timeout, we'll just return the error
+                            BACnetErr::TsmTimeout | BACnetErr::ApduTimeout => {
+                                return Err(err);
+                            }
+                            _ => {
+                                warn!("{}", bacnet_err);
+                            }
                         }
                     } else {
                         // Unknown error, return it
@@ -346,7 +370,13 @@ impl BACnetDevice {
                                     ret.insert(prop, BACnetValue::Array(ary));
                                 }
                             }
-                            _ => debug!("{:?}", bacnet_err),
+                            BACnetErr::TsmTimeout | BACnetErr::ApduTimeout => {
+                                // If we get a timeout, we'll just return the error
+                                return Err(err);
+                            }
+                            _ => {
+                                warn!("{}", bacnet_err);
+                            }
                         }
                     } else {
                         // Unknown error, return it
@@ -547,7 +577,7 @@ fn decode_data(data: BACNET_READ_PROPERTY_DATA) -> Result<BACnetValue> {
     let len = unsafe { bacapp_decode_application_data(appdata, appdata_len as u32, &mut value) };
 
     if len == BACNET_STATUS_ERROR {
-        bail!("decoding error");
+        bail!(BACnetErr::DecodeFailed);
     }
 
     Ok(match value.tag as u32 {
@@ -716,7 +746,10 @@ fn decode_data(data: BACNET_READ_PROPERTY_DATA) -> Result<BACnetValue> {
         }
         _ => {
             let tag_name = cstr(unsafe { bactext_application_tag_name(value.tag as u32) });
-            bail!("unhandled type tag {} ({:?})", tag_name, value.tag);
+            bail!(BACnetErr::UnhandledTag {
+                tag_name,
+                tag: value.tag,
+            });
         }
     })
 }
