@@ -82,7 +82,7 @@ fn main() {
         let mut char_string = BACNET_CHARACTER_STRING::default();
         characterstring_init_ansi_safe(
             &mut char_string,
-            "BACnet Rust Server".to_string().as_ptr() as *mut i8,
+            "BACnet Rust Server".to_string().as_ptr() as *mut _,
             20,
         );
         Device_Set_Object_Name(&mut char_string);
