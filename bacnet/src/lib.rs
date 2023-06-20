@@ -218,8 +218,6 @@ impl BACnetDevice {
                 unsafe { npdu_handler(&mut src, &mut rx_buf as *mut _, pdu_len) }
             }
 
-            // FIXME(tj): Need to do tsm_invoke_id_free() and tsm_invoke_id_failed() in this loop
-            // as well.
             if unsafe { tsm_invoke_id_free(request_invoke_id) } {
                 break;
             }
@@ -228,7 +226,6 @@ impl BACnetDevice {
             }
 
             if start.elapsed().as_secs() > 3 {
-                // FIXME(tj): A better timeout here...
                 bail!("APDU timeout");
             }
         }
