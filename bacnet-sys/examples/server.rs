@@ -79,6 +79,14 @@ fn main() {
         Analog_Output_Create(2);
         Binary_Output_Create(2);
 
+        let mut char_string = BACNET_CHARACTER_STRING::default();
+        characterstring_init_ansi_safe(
+            &mut char_string,
+            "BACnet Rust Server".to_string().as_ptr() as *mut i8,
+            20,
+        );
+        Device_Set_Object_Name(&mut char_string);
+
         address_init();
         dlenv_init();
 
