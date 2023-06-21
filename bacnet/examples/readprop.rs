@@ -73,7 +73,7 @@ fn parse_property(src: &str) -> Result<BACNET_PROPERTY_ID, String> {
 fn main() {
     pretty_env_logger::init();
     let opt = Opt::from_args();
-    let mut dev = BACnetServer::builder()
+    let mut server = BACnetServer::builder()
         .device_id(opt.device_id)
         .ip(opt.ip)
         .dnet(opt.dnet)
@@ -81,10 +81,10 @@ fn main() {
         .port(opt.port)
         .build();
 
-    match dev.connect() {
+    match server.connect() {
         Ok(()) => {
             for _ in 0..opt.number_of_reads {
-                let r = dev.read_prop_at(
+                let r = server.read_prop_at(
                     opt.object_type,
                     opt.object_instance,
                     opt.property,

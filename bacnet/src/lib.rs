@@ -469,7 +469,6 @@ impl Drop for BACnetServer {
     }
 }
 
-// ./bacrp 1025 analog-value 22 present-value --mac 192.168.10.96 --dnet 5 --dadr 14
 #[derive(Debug)]
 pub struct BACnetServerBuilder {
     ip: Ipv4Addr,

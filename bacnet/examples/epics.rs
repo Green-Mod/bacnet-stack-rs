@@ -22,7 +22,7 @@ struct Opt {
 fn main() {
     pretty_env_logger::init();
     let opt = Opt::from_args();
-    let mut dev = BACnetServer::builder()
+    let mut server = BACnetServer::builder()
         .device_id(opt.device_id)
         .ip(opt.ip)
         .dnet(opt.dnet)
@@ -30,8 +30,8 @@ fn main() {
         .port(opt.port)
         .build();
 
-    match dev.connect() {
-        Ok(()) => match dev.epics() {
+    match server.connect() {
+        Ok(()) => match server.epics() {
             Ok(epics) => {
                 println!("Got epics {:#?}", epics);
             }
