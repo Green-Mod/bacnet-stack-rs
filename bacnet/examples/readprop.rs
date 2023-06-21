@@ -1,7 +1,7 @@
 extern crate bacnet;
 extern crate structopt;
 
-use bacnet::BACnetDevice;
+use bacnet::BACnetServer;
 use bacnet_sys::{
     bactext_object_type_strtol, bactext_property_strtol, BACNET_OBJECT_TYPE, BACNET_PROPERTY_ID,
 };
@@ -73,7 +73,7 @@ fn parse_property(src: &str) -> Result<BACNET_PROPERTY_ID, String> {
 fn main() {
     pretty_env_logger::init();
     let opt = Opt::from_args();
-    let mut dev = BACnetDevice::builder()
+    let mut dev = BACnetServer::builder()
         .device_id(opt.device_id)
         .ip(opt.ip)
         .dnet(opt.dnet)

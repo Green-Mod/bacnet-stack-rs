@@ -1,7 +1,7 @@
 extern crate bacnet;
 extern crate structopt;
 
-use bacnet::BACnetDevice;
+use bacnet::BACnetServer;
 use structopt::StructOpt;
 
 #[derive(StructOpt, Debug)]
@@ -22,7 +22,7 @@ struct Opt {
 fn main() {
     pretty_env_logger::init();
     let opt = Opt::from_args();
-    let mut dev = BACnetDevice::builder()
+    let mut dev = BACnetServer::builder()
         .device_id(opt.device_id)
         .ip(opt.ip)
         .dnet(opt.dnet)

@@ -45,9 +45,9 @@ type DeviceId = u32;
 
 // We need a global structure here for collecting "target addresses"
 lazy_static! {
-    /// Global tracking struct for target addresses. These are devices that we consider ourselves
+    /// Global tracking struct for target addresses. These are servers that we consider ourselves
     /// connected to and communicating with.
-    static ref TARGET_ADDRESSES: Mutex<HashMap<DeviceId, TargetDevice>> = Mutex::new(HashMap::new());
+    static ref TARGET_ADDRESSES: Mutex<HashMap<DeviceId, TargetServer>> = Mutex::new(HashMap::new());
 }
 
 //// Epics property list
@@ -87,8 +87,8 @@ pub enum BACnetErr {
         code: u32,
     },
 
-    /// Device not connected
-    #[error("Not connected to device {device_id}")]
+    /// Not connected to server
+    #[error("Not connected to server with Device ID {device_id}")]
     NotConnected { device_id: u32 },
 
     /// TSM Timeout
@@ -114,7 +114,7 @@ pub enum BACnetErr {
 // request_invoke_id so the response can be matched properly, then we set the decoded value inside
 // an Option and read_prop() fishes it out. This means that read_prop() needs to acquire the mutex
 // twice for each data extraction, which seems like a really poor design.
-struct TargetDevice {
+struct TargetServer {
     addr: BACNET_ADDRESS,
     request: Option<(RequestInvokeId, RequestStatus)>, // For tracking on-going an ongoing request
     value: Option<Result<BACnetValue>>,                // TODO Build this into the 'request status'
@@ -122,14 +122,13 @@ struct TargetDevice {
 
 // As I understand the BACnet stack, it works by acting as another BACnet device on the network.
 //
-// This means that there's not really a
-//
-// To "connect" to a device, we call address_bind_request(device_id, ..) which adds the device (if
+// This means that there's not really a way
+// to "connect" to a server, we call address_bind_request(device_id, ..) which adds the server (if
 // possible) to the internal address cache. [sidenote: The MAX_ADDRESS_CACHE = 255, which I take to
 // mean that we can connect to at most 255 devices].
 
 #[derive(Debug, Clone)]
-pub struct BACnetDevice {
+pub struct BACnetServer {
     pub device_id: u32,
     max_apdu: u32,
     addr: BACNET_ADDRESS,
@@ -138,9 +137,9 @@ pub struct BACnetDevice {
 pub type ObjectType = BACNET_OBJECT_TYPE;
 pub type ObjectPropertyId = BACNET_PROPERTY_ID;
 
-impl BACnetDevice {
-    pub fn builder() -> BACnetDeviceBuilder {
-        BACnetDeviceBuilder::default()
+impl BACnetServer {
+    pub fn builder() -> BACnetServerBuilder {
+        BACnetServerBuilder::default()
     }
 
     pub fn connect(&mut self) -> Result<()> {
@@ -153,7 +152,7 @@ impl BACnetDevice {
             address_add(self.device_id, MAX_APDU, &mut self.addr);
         }
         let mut target_addr = BACNET_ADDRESS::default();
-        // FIXME(tj): Wait until device is bound, or timeout
+        // FIXME(tj): Wait until server is bound, or timeout
         let found =
             unsafe { address_bind_request(self.device_id, &mut self.max_apdu, &mut target_addr) };
         debug!("found = {}", found);
@@ -161,7 +160,7 @@ impl BACnetDevice {
             let mut lock = TARGET_ADDRESSES.lock().unwrap();
             lock.insert(
                 self.device_id,
-                TargetDevice {
+                TargetServer {
                     addr: target_addr,
                     request: None,
                     value: None,
@@ -169,7 +168,10 @@ impl BACnetDevice {
             );
             Ok(())
         } else {
-            Err(anyhow!("failed to bind to the device"))
+            Err(anyhow!(
+                "Failed to bind to the server with Device ID {}",
+                self.device_id
+            ))
         }
     }
 
@@ -389,7 +391,7 @@ impl BACnetDevice {
         Ok(ret)
     }
 
-    /// Scan the device for all available tags and produce an `Epics` object
+    /// Scan the server for all available properties and produce an `Epics` object
     pub fn epics(&self) -> Result<Epics> {
         let device_props = self.read_properties(BACnetObjectType_OBJECT_DEVICE, self.device_id)?;
 
@@ -460,7 +462,7 @@ impl BACnetDevice {
     }
 }
 
-impl Drop for BACnetDevice {
+impl Drop for BACnetServer {
     fn drop(&mut self) {
         info!("disconnecting");
         unsafe { address_remove_device(self.device_id) };
@@ -469,7 +471,7 @@ impl Drop for BACnetDevice {
 
 // ./bacrp 1025 analog-value 22 present-value --mac 192.168.10.96 --dnet 5 --dadr 14
 #[derive(Debug)]
-pub struct BACnetDeviceBuilder {
+pub struct BACnetServerBuilder {
     ip: Ipv4Addr,
     dnet: u16,
     dadr: u8,
@@ -477,7 +479,7 @@ pub struct BACnetDeviceBuilder {
     device_id: u32,
 }
 
-impl Default for BACnetDeviceBuilder {
+impl Default for BACnetServerBuilder {
     fn default() -> Self {
         Self {
             ip: Ipv4Addr::LOCALHOST,
@@ -489,7 +491,7 @@ impl Default for BACnetDeviceBuilder {
     }
 }
 
-impl BACnetDeviceBuilder {
+impl BACnetServerBuilder {
     pub fn ip(mut self, ip: Ipv4Addr) -> Self {
         self.ip = ip;
         self
@@ -515,8 +517,8 @@ impl BACnetDeviceBuilder {
         self
     }
 
-    pub fn build(self) -> BACnetDevice {
-        let BACnetDeviceBuilder {
+    pub fn build(self) -> BACnetServer {
+        let BACnetServerBuilder {
             ip,
             dnet,
             dadr,
@@ -532,7 +534,7 @@ impl BACnetDeviceBuilder {
         addr.adr[0] = dadr;
         addr.len = 1;
 
-        BACnetDevice {
+        BACnetServer {
             device_id,
             max_apdu: 0,
             addr,
@@ -551,7 +553,7 @@ extern "C" fn my_readprop_ack_handler(
 
     let invoke_id = unsafe { (*service_data).invoke_id };
     let mut lock = TARGET_ADDRESSES.lock().unwrap();
-    if let Some(target) = find_matching_device(&mut lock, src, invoke_id) {
+    if let Some(target) = find_matching_server(&mut lock, src, invoke_id) {
         // Decode the data
         let len = unsafe {
             rp_ack_decode_service_request(service_request, service_len.into(), &mut data as *mut _)
@@ -563,7 +565,7 @@ extern "C" fn my_readprop_ack_handler(
             target.value = Some(decoded);
         } else {
             error!("<decode failed>");
-            target.value = Some(Err(anyhow!("failed to decode data")));
+            target.value = Some(Err(anyhow!("Failed to decode data")));
         }
         target.request = Some((invoke_id, RequestStatus::Done));
     }
@@ -772,7 +774,7 @@ extern "C" fn my_error_handler(
     error_code: BACNET_ERROR_CODE,
 ) {
     let mut lock = TARGET_ADDRESSES.lock().unwrap();
-    if let Some(target) = find_matching_device(&mut lock, src, invoke_id) {
+    if let Some(target) = find_matching_server(&mut lock, src, invoke_id) {
         let error_class_str = cstr(unsafe { bactext_error_class_name(error_class) });
         let error_code_str = cstr(unsafe { bactext_error_code_name(error_code) });
         debug!(
@@ -799,7 +801,7 @@ extern "C" fn my_abort_handler(
     let _ = server;
     let _ = src;
     let mut lock = TARGET_ADDRESSES.lock().unwrap();
-    if let Some(target) = find_matching_device(&mut lock, src, invoke_id) {
+    if let Some(target) = find_matching_server(&mut lock, src, invoke_id) {
         let abort_text = cstr(unsafe { bactext_abort_reason_name(abort_reason as u32) });
         debug!(
             "aborted invoke_id = {} abort_reason = {} ({})",
@@ -818,7 +820,7 @@ extern "C" fn my_reject_handler(src: *mut BACNET_ADDRESS, invoke_id: u8, reject_
     let _ = src;
 
     let mut lock = TARGET_ADDRESSES.lock().unwrap();
-    if let Some(target) = find_matching_device(&mut lock, src, invoke_id) {
+    if let Some(target) = find_matching_server(&mut lock, src, invoke_id) {
         target.request = Some((
             invoke_id,
             RequestStatus::Error(BACnetErr::Rejected {
@@ -834,15 +836,15 @@ fn cstr(ptr: *const c_char) -> String {
         .into_owned()
 }
 
-// Holding the lock on the global map of devices, find a device that matches `src` and the given
+// Holding the lock on the global map of servers, find a server that matches `src` and the given
 // RequestInvokeId.
 //
 // This function _should_ return something.
-fn find_matching_device<'a>(
-    guard: &'a mut std::sync::MutexGuard<'_, HashMap<u32, TargetDevice>>,
+fn find_matching_server<'a>(
+    guard: &'a mut std::sync::MutexGuard<'_, HashMap<u32, TargetServer>>,
     src: *mut BACNET_ADDRESS,
     invoke_id: RequestInvokeId,
-) -> Option<&'a mut TargetDevice> {
+) -> Option<&'a mut TargetServer> {
     for target in guard.values_mut() {
         let is_addr_match = unsafe { bacnet_address_same(&mut target.addr, src) };
         if let Some((request_invoke_id, _)) = &target.request {
@@ -852,7 +854,7 @@ fn find_matching_device<'a>(
             }
         }
     }
-    error!("device wasn't matched! {:?}", src);
+    error!("Server wasn't matched! {:?}", src);
     None
 }
 
