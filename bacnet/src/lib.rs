@@ -87,6 +87,10 @@ pub enum BACnetErr {
         code: u32,
     },
 
+    /// Request is still ongoing
+    #[error("Request is still ongoing")]
+    RequestOngoing,
+
     /// No value was extracted
     #[error("No value was extracted")]
     NoValue,
@@ -262,17 +266,21 @@ impl BACnetServer {
             }
         }
 
-        let ret: Result<BACnetValue, BACnetErr> = {
-            // FIXME: Avoid unwrapping here
+        let ret = {
             let mut lock = TARGET_ADDRESSES.lock().unwrap();
-            let h = lock.get_mut(&self.device_id).unwrap();
+
+            let h = lock.get_mut(&self.device_id);
+            if h.is_none() {
+                return Err(BACnetErr::NotConnected {
+                    device_id: self.device_id,
+                });
+            }
+            let h = h.unwrap();
+
             let request_status = h.request.take();
             match request_status.unwrap().1 {
                 RequestStatus::Done => h.value.take().unwrap_or(Err(BACnetErr::NoValue)),
-                // FIXME: Avoid panic here
-                RequestStatus::Ongoing => panic!(
-                    "attempting to extract a value, but the request is still marked as on-going"
-                ),
+                RequestStatus::Ongoing => Err(BACnetErr::RequestOngoing),
                 RequestStatus::Error(err) => Err(err),
             }
         };
