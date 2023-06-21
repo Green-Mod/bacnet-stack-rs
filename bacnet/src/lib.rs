@@ -1,4 +1,4 @@
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, Result};
 use bacnet_sys::{
     address_add, address_bind_request, address_remove_device, apdu_set_abort_handler,
     apdu_set_confirmed_ack_handler, apdu_set_confirmed_handler, apdu_set_error_handler,
@@ -87,6 +87,14 @@ pub enum BACnetErr {
         code: u32,
     },
 
+    /// No value was extracted
+    #[error("No value was extracted")]
+    NoValue,
+
+    /// Invalid value was extracted
+    #[error("Invalid value was extracted")]
+    InvalidValue,
+
     /// Not connected to server
     #[error("Not connected to server with Device ID {device_id}")]
     NotConnected { device_id: u32 },
@@ -117,7 +125,7 @@ pub enum BACnetErr {
 struct TargetServer {
     addr: BACNET_ADDRESS,
     request: Option<(RequestInvokeId, RequestStatus)>, // For tracking on-going an ongoing request
-    value: Option<Result<BACnetValue>>,                // TODO Build this into the 'request status'
+    value: Option<Result<BACnetValue, BACnetErr>>,     // TODO Build this into the 'request status'
 }
 
 // As I understand the BACnet stack, it works by acting as another BACnet device on the network.
@@ -182,7 +190,7 @@ impl BACnetServer {
         &self,
         object_type: ObjectType,
         object_instance: u32,
-    ) -> Result<BACnetValue> {
+    ) -> Result<BACnetValue, BACnetErr> {
         self.read_prop(
             object_type,
             object_instance,
@@ -198,7 +206,7 @@ impl BACnetServer {
         object_type: ObjectType,
         object_instance: u32,
         property_id: ObjectPropertyId,
-    ) -> Result<BACnetValue> {
+    ) -> Result<BACnetValue, BACnetErr> {
         self.read_prop_at(object_type, object_instance, property_id, BACNET_ARRAY_ALL)
     }
 
@@ -208,7 +216,7 @@ impl BACnetServer {
         object_instance: u32,
         property_id: ObjectPropertyId,
         index: u32,
-    ) -> Result<BACnetValue> {
+    ) -> Result<BACnetValue, BACnetErr> {
         let init = std::time::Instant::now();
         const TIMEOUT: u32 = 100;
         let request_invoke_id =
@@ -225,8 +233,8 @@ impl BACnetServer {
                 h.request = Some((request_invoke_id, RequestStatus::Ongoing));
                 request_invoke_id
             } else {
-                bail!(BACnetErr::NotConnected {
-                    device_id: self.device_id
+                return Err(BACnetErr::NotConnected {
+                    device_id: self.device_id,
                 });
             };
 
@@ -246,27 +254,26 @@ impl BACnetServer {
                 break;
             }
             if unsafe { tsm_invoke_id_failed(request_invoke_id) } {
-                bail!(BACnetErr::TsmTimeout);
+                return Err(BACnetErr::TsmTimeout);
             }
 
             if start.elapsed().as_secs() > 3 {
-                bail!(BACnetErr::ApduTimeout);
+                return Err(BACnetErr::ApduTimeout);
             }
         }
 
-        let ret = {
+        let ret: Result<BACnetValue, BACnetErr> = {
+            // FIXME: Avoid unwrapping here
             let mut lock = TARGET_ADDRESSES.lock().unwrap();
             let h = lock.get_mut(&self.device_id).unwrap();
             let request_status = h.request.take();
             match request_status.unwrap().1 {
-                RequestStatus::Done => h
-                    .value
-                    .take()
-                    .unwrap_or_else(|| Err(anyhow!("No value was extracted"))),
+                RequestStatus::Done => h.value.take().unwrap_or(Err(BACnetErr::NoValue)),
+                // FIXME: Avoid panic here
                 RequestStatus::Ongoing => panic!(
                     "attempting to extract a value, but the request is still marked as on-going"
                 ),
-                RequestStatus::Error(err) => Err(err.into()),
+                RequestStatus::Error(err) => Err(err),
             }
         };
 
@@ -282,7 +289,7 @@ impl BACnetServer {
         &self,
         object_type: BACNET_OBJECT_TYPE,
         object_instance: u32,
-    ) -> Result<HashMap<ObjectPropertyId, BACnetValue>> {
+    ) -> Result<HashMap<ObjectPropertyId, BACnetValue>, BACnetErr> {
         let mut special_property_list = special_property_list_t::default();
 
         // Fetch all the properties that are known to be required here.
@@ -309,26 +316,21 @@ impl BACnetServer {
                     debug!("OK. Got value {:?}", v);
                     ret.insert(prop, v);
                 }
-                Err(err) => {
-                    if let Some(bacnet_err) = err.downcast_ref::<BACnetErr>() {
-                        match bacnet_err {
-                            // If bacnet_err is unknown property, just debug it and move on
-                            BACnetErr::Error {
-                                class: 2, code: 32, ..
-                            } => {
-                                debug!("{}", err);
-                            }
-                            // If we get a timeout, we'll just return the error
-                            BACnetErr::TsmTimeout | BACnetErr::ApduTimeout => {
-                                return Err(err);
-                            }
-                            _ => {
-                                warn!("{}", bacnet_err);
-                            }
+                Err(bacnet_err) => {
+                    match bacnet_err {
+                        // If bacnet_err is unknown property, just debug it and move on
+                        BACnetErr::Error {
+                            class: 2, code: 32, ..
+                        } => {
+                            debug!("{}", bacnet_err);
                         }
-                    } else {
-                        // Unknown error, return it
-                        return Err(err);
+                        // If we get a timeout, we'll just return the error
+                        BACnetErr::TsmTimeout | BACnetErr::ApduTimeout => {
+                            return Err(bacnet_err);
+                        }
+                        _ => {
+                            warn!("{}", bacnet_err);
+                        }
                     }
                 }
             }
@@ -348,41 +350,36 @@ impl BACnetServer {
                     debug!("OK. Got value {:?}", v);
                     ret.insert(prop, v);
                 }
-                Err(err) => {
-                    if let Some(bacnet_err) = err.downcast_ref::<BACnetErr>() {
-                        match bacnet_err {
-                            BACnetErr::Aborted { code, .. } if *code == 4 => {
-                                // code == 4 is "segmentation not supported". This is an array
-                                let len: Result<u64, _> = self
-                                    .read_prop_at(object_type, object_instance, prop, 0)
-                                    .and_then(|x| x.try_into());
+                Err(bacnet_err) => {
+                    match bacnet_err {
+                        BACnetErr::Aborted { code, .. } if code == 4 => {
+                            // code == 4 is "segmentation not supported". This is an array
+                            let len: Result<u64, _> = self
+                                .read_prop_at(object_type, object_instance, prop, 0)
+                                .and_then(|x| x.try_into().map_err(|_| BACnetErr::InvalidValue));
 
-                                if let Ok(len) = len {
-                                    let mut ary = Vec::with_capacity(len as usize);
-                                    for i in 0..len {
-                                        if let Ok(val) = self.read_prop_at(
-                                            object_type,
-                                            object_instance,
-                                            prop,
-                                            i as u32 + 1,
-                                        ) {
-                                            ary.push(val);
-                                        }
+                            if let Ok(len) = len {
+                                let mut ary = Vec::with_capacity(len as usize);
+                                for i in 0..len {
+                                    if let Ok(val) = self.read_prop_at(
+                                        object_type,
+                                        object_instance,
+                                        prop,
+                                        i as u32 + 1,
+                                    ) {
+                                        ary.push(val);
                                     }
-                                    ret.insert(prop, BACnetValue::Array(ary));
                                 }
-                            }
-                            BACnetErr::TsmTimeout | BACnetErr::ApduTimeout => {
-                                // If we get a timeout, we'll just return the error
-                                return Err(err);
-                            }
-                            _ => {
-                                warn!("{}", bacnet_err);
+                                ret.insert(prop, BACnetValue::Array(ary));
                             }
                         }
-                    } else {
-                        // Unknown error, return it
-                        return Err(err);
+                        BACnetErr::TsmTimeout | BACnetErr::ApduTimeout => {
+                            // If we get a timeout, we'll just return the error
+                            return Err(bacnet_err);
+                        }
+                        _ => {
+                            warn!("{}", bacnet_err);
+                        }
                     }
                 }
             }
@@ -392,7 +389,7 @@ impl BACnetServer {
     }
 
     /// Scan the server for all available properties and produce an `Epics` object
-    pub fn epics(&self) -> Result<Epics> {
+    pub fn epics(&self) -> Result<Epics, BACnetErr> {
         let device_props = self.read_properties(BACnetObjectType_OBJECT_DEVICE, self.device_id)?;
 
         // Read the object-list
@@ -403,7 +400,8 @@ impl BACnetServer {
                 BACNET_PROPERTY_ID_PROP_OBJECT_LIST,
                 0,
             )?
-            .try_into()?;
+            .try_into()
+            .map_err(|_| BACnetErr::InvalidValue)?;
 
         let mut object_ids = Vec::with_capacity(len as usize);
         for i in 2..len + 1 {
@@ -564,13 +562,13 @@ extern "C" fn my_readprop_ack_handler(
             target.value = Some(decoded);
         } else {
             error!("<decode failed>");
-            target.value = Some(Err(anyhow!("Failed to decode data")));
+            target.value = Some(Err(BACnetErr::DecodeFailed));
         }
         target.request = Some((invoke_id, RequestStatus::Done));
     }
 }
 
-fn decode_data(data: BACNET_READ_PROPERTY_DATA) -> Result<BACnetValue> {
+fn decode_data(data: BACNET_READ_PROPERTY_DATA) -> Result<BACnetValue, BACnetErr> {
     let mut value = BACNET_APPLICATION_DATA_VALUE::default();
     let appdata = data.application_data;
     let appdata_len = data.application_data_len;
@@ -578,7 +576,7 @@ fn decode_data(data: BACNET_READ_PROPERTY_DATA) -> Result<BACnetValue> {
     let len = unsafe { bacapp_decode_application_data(appdata, appdata_len as u32, &mut value) };
 
     if len == BACNET_STATUS_ERROR {
-        bail!(BACnetErr::DecodeFailed);
+        return Err(BACnetErr::DecodeFailed);
     }
 
     Ok(match value.tag as u32 {
@@ -747,7 +745,7 @@ fn decode_data(data: BACNET_READ_PROPERTY_DATA) -> Result<BACnetValue> {
         }
         _ => {
             let tag_name = cstr(unsafe { bactext_application_tag_name(value.tag as u32) });
-            bail!(BACnetErr::UnhandledTag {
+            return Err(BACnetErr::UnhandledTag {
                 tag_name,
                 tag: value.tag,
             });
