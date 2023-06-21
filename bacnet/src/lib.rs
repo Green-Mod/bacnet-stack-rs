@@ -278,7 +278,12 @@ impl BACnetServer {
             let h = h.unwrap();
 
             let request_status = h.request.take();
-            match request_status.unwrap().1 {
+            if request_status.is_none() {
+                return Err(BACnetErr::NoValue);
+            }
+            let request_status = request_status.unwrap();
+
+            match request_status.1 {
                 RequestStatus::Done => h.value.take().unwrap_or(Err(BACnetErr::NoValue)),
                 RequestStatus::Ongoing => Err(BACnetErr::RequestOngoing),
                 RequestStatus::Error(err) => Err(err),
