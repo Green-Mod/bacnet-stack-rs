@@ -1,24 +1,25 @@
+use crate::encoding::encode_data;
 use anyhow::{anyhow, Result};
 use bacnet_sys::{
     address_add, address_bind_request, address_remove_device, apdu_set_abort_handler,
-    apdu_set_confirmed_ack_handler, apdu_set_confirmed_handler, apdu_set_error_handler,
-    apdu_set_reject_handler, apdu_set_unconfirmed_handler,
-    apdu_set_unrecognized_service_handler_handler, bacapp_decode_application_data,
-    bacnet_address_same, bactext_abort_reason_name, bactext_application_tag_name,
-    bactext_binary_present_value_name, bactext_engineering_unit_name, bactext_error_class_name,
-    bactext_error_code_name, bactext_object_type_name, bactext_property_name, bip_receive,
-    bitstring_bit, bitstring_bits_used, dlenv_init, handler_i_am_bind, handler_read_property,
-    handler_unrecognized_service, handler_who_is, npdu_handler, property_list_special,
-    rp_ack_decode_service_request, special_property_list_t, tsm_invoke_id_failed,
-    tsm_invoke_id_free, BACnetObjectType_OBJECT_DEVICE, BACnetObjectType_OBJECT_PROPRIETARY_MIN,
+    apdu_set_confirmed_ack_handler, apdu_set_confirmed_handler,
+    apdu_set_confirmed_simple_ack_handler, apdu_set_error_handler, apdu_set_reject_handler,
+    apdu_set_unconfirmed_handler, apdu_set_unrecognized_service_handler_handler,
+    bacnet_address_same, bactext_abort_reason_name, bactext_error_class_name,
+    bactext_error_code_name, bactext_property_name, bip_receive, dlenv_init, handler_i_am_bind,
+    handler_read_property, handler_unrecognized_service, handler_who_is, npdu_handler,
+    property_list_special, rp_ack_decode_service_request, special_property_list_t,
+    tsm_invoke_id_failed, tsm_invoke_id_free, BACnetObjectType_OBJECT_DEVICE,
     BACnet_Confirmed_Service_Choice_SERVICE_CONFIRMED_READ_PROPERTY,
+    BACnet_Confirmed_Service_Choice_SERVICE_CONFIRMED_WRITE_PROPERTY,
     BACnet_Unconfirmed_Service_Choice_SERVICE_UNCONFIRMED_I_AM,
     BACnet_Unconfirmed_Service_Choice_SERVICE_UNCONFIRMED_WHO_IS, Device_Init,
-    Send_Read_Property_Request, BACNET_ADDRESS, BACNET_APPLICATION_DATA_VALUE, BACNET_ARRAY_ALL,
+    Send_Read_Property_Request, Send_Write_Property_Request, BACNET_ADDRESS, BACNET_ARRAY_ALL,
     BACNET_CONFIRMED_SERVICE_ACK_DATA, BACNET_ERROR_CLASS, BACNET_ERROR_CODE, BACNET_OBJECT_TYPE,
     BACNET_PROPERTY_ID, BACNET_PROPERTY_ID_PROP_OBJECT_LIST, BACNET_PROPERTY_ID_PROP_PRESENT_VALUE,
-    BACNET_READ_PROPERTY_DATA, BACNET_STATUS_ERROR, MAX_APDU, MAX_ASHRAE_OBJECT_TYPE, MAX_MPDU,
+    BACNET_READ_PROPERTY_DATA, MAX_APDU, MAX_MPDU,
 };
+use encoding::decode_data;
 pub use epics::Epics;
 use lazy_static::lazy_static;
 use log::{debug, error, info, log_enabled, trace, warn};
@@ -33,6 +34,7 @@ use std::{
 use thiserror::Error;
 use value::BACnetValue;
 
+mod encoding;
 mod epics;
 pub mod value;
 pub mod whohas;
@@ -114,6 +116,10 @@ pub enum BACnetErr {
     /// Decoding failed
     #[error("Decoding failed")]
     DecodeFailed,
+
+    /// Encode failed
+    #[error("Encode failed")]
+    EncodeFailed,
 
     /// Unhandled tag type
     #[error("Unhandled type tag {tag_name} ({tag:?})")]
@@ -290,7 +296,7 @@ impl BACnetServer {
             }
         };
 
-        trace!("read_prop() finished in {:?}", init.elapsed());
+        trace!("read_prop_at() finished in {:?}", init.elapsed());
         ret
     }
 
@@ -398,6 +404,91 @@ impl BACnetServer {
         }
 
         Ok(ret)
+    }
+
+    pub fn write_prop_at(
+        &self,
+        object_type: ObjectType,
+        object_instance: u32,
+        value: BACnetValue,
+        property_id: ObjectPropertyId,
+        index: u32,
+    ) -> Result<(), BACnetErr> {
+        let init = std::time::Instant::now();
+        const TIMEOUT: u32 = 100;
+        let request_invoke_id =
+            if let Some(h) = TARGET_ADDRESSES.lock().unwrap().get_mut(&self.device_id) {
+                let request_invoke_id = unsafe {
+                    let mut object_value = encode_data(value)?;
+
+                    Send_Write_Property_Request(
+                        self.device_id,
+                        object_type,
+                        object_instance,
+                        property_id,
+                        &mut object_value,
+                        0,
+                        index,
+                    )
+                };
+                h.request = Some((request_invoke_id, RequestStatus::Ongoing));
+                request_invoke_id
+            } else {
+                return Err(BACnetErr::NotConnected {
+                    device_id: self.device_id,
+                });
+            };
+
+        let mut src = BACNET_ADDRESS::default();
+        let mut rx_buf = [0u8; MAX_MPDU as usize];
+        let start = std::time::Instant::now();
+        loop {
+            // TODO(tj): Consider pulling the "driving forward the internal state machine" stuff
+            // into an inner method here. We need it for EPICS as well.
+            let pdu_len =
+                unsafe { bip_receive(&mut src, &mut rx_buf as *mut _, MAX_MPDU as u16, TIMEOUT) };
+            if pdu_len > 0 {
+                unsafe { npdu_handler(&mut src, &mut rx_buf as *mut _, pdu_len) }
+            }
+
+            if unsafe { tsm_invoke_id_free(request_invoke_id) } {
+                break;
+            }
+            if unsafe { tsm_invoke_id_failed(request_invoke_id) } {
+                return Err(BACnetErr::TsmTimeout);
+            }
+
+            if start.elapsed().as_secs() > 3 {
+                return Err(BACnetErr::ApduTimeout);
+            }
+        }
+
+        let ret = {
+            let mut lock = TARGET_ADDRESSES.lock().unwrap();
+
+            let h = lock.get_mut(&self.device_id);
+            if h.is_none() {
+                return Err(BACnetErr::NotConnected {
+                    device_id: self.device_id,
+                });
+            }
+            let h = h.unwrap();
+
+            let request_status = h.request.take();
+            if request_status.is_none() {
+                return Err(BACnetErr::NoValue);
+            }
+            let request_status = request_status.unwrap();
+
+            match request_status.1 {
+                RequestStatus::Done => Ok(()),
+                RequestStatus::Ongoing => Err(BACnetErr::RequestOngoing),
+                RequestStatus::Error(err) => Err(err),
+            }
+        };
+
+        trace!("write_prop_at() finished in {:?}", init.elapsed());
+        ret
     }
 
     /// Scan the server for all available properties and produce an `Epics` object
@@ -580,202 +671,12 @@ extern "C" fn my_readprop_ack_handler(
     }
 }
 
-fn decode_data(data: BACNET_READ_PROPERTY_DATA) -> Result<BACnetValue, BACnetErr> {
-    let mut value = BACNET_APPLICATION_DATA_VALUE::default();
-    let appdata = data.application_data;
-    let appdata_len = data.application_data_len;
-
-    let len = unsafe { bacapp_decode_application_data(appdata, appdata_len as u32, &mut value) };
-
-    if len == BACNET_STATUS_ERROR {
-        return Err(BACnetErr::DecodeFailed);
+#[no_mangle]
+extern "C" fn my_property_simple_ack_handler(src: *mut BACNET_ADDRESS, invoke_id: u8) {
+    let mut lock = TARGET_ADDRESSES.lock().unwrap();
+    if let Some(target) = find_matching_server(&mut lock, src, invoke_id) {
+        target.request = Some((invoke_id, RequestStatus::Done));
     }
-
-    Ok(match value.tag as u32 {
-        bacnet_sys::BACNET_APPLICATION_TAG_BACNET_APPLICATION_TAG_NULL => BACnetValue::Null,
-        bacnet_sys::BACNET_APPLICATION_TAG_BACNET_APPLICATION_TAG_BOOLEAN => {
-            BACnetValue::Bool(unsafe { value.type_.Boolean })
-        }
-        bacnet_sys::BACNET_APPLICATION_TAG_BACNET_APPLICATION_TAG_SIGNED_INT => {
-            BACnetValue::Int(unsafe { value.type_.Signed_Int })
-        }
-        bacnet_sys::BACNET_APPLICATION_TAG_BACNET_APPLICATION_TAG_UNSIGNED_INT => {
-            BACnetValue::Uint(unsafe { value.type_.Unsigned_Int })
-        }
-        bacnet_sys::BACNET_APPLICATION_TAG_BACNET_APPLICATION_TAG_REAL => {
-            BACnetValue::Real(unsafe { value.type_.Real })
-        }
-        bacnet_sys::BACNET_APPLICATION_TAG_BACNET_APPLICATION_TAG_DOUBLE => {
-            BACnetValue::Double(unsafe { value.type_.Double })
-        }
-        bacnet_sys::BACNET_APPLICATION_TAG_BACNET_APPLICATION_TAG_CHARACTER_STRING => {
-            // BACnet string has the following structure
-            // size_t length, uint8_t encoding, char value[MAX_CHARACTER_STRING_BYTES]
-            // For now just assume UTF-8 bytes, but we really should respect encodings...
-            //
-            // FIXME(tj): Look at value.type_.Character_String.encoding
-            let s = cstr(unsafe {
-                value.type_.Character_String.value[0..value.type_.Character_String.length].as_ptr()
-            });
-            BACnetValue::String(s)
-        }
-        bacnet_sys::BACNET_APPLICATION_TAG_BACNET_APPLICATION_TAG_OCTET_STRING => {
-            let v = unsafe { value.type_.Octet_String };
-            BACnetValue::Bytes(v.value[0..v.length].to_vec())
-        }
-        bacnet_sys::BACNET_APPLICATION_TAG_BACNET_APPLICATION_TAG_BIT_STRING => {
-            let nbits = unsafe { bitstring_bits_used(&mut value.type_.Bit_String) };
-            // info!("Number of bits: {}", nbits);
-
-            let mut bits = vec![];
-            for i in 0..nbits {
-                let bit = unsafe { bitstring_bit(&mut value.type_.Bit_String, i) };
-                bits.push(bit);
-            }
-
-            BACnetValue::BitString(bits)
-        }
-        bacnet_sys::BACNET_APPLICATION_TAG_BACNET_APPLICATION_TAG_ENUMERATED => {
-            // FIXME(tj): Find the string representation of the enum (if possible).
-            // See bacapp.c:1200
-            // See bactext.c:1266 - bactext_binary_present_value_name()
-            // Try calling:
-            //
-            // int bacapp_snprintf_value(char *str, size_t str_len, BACNET_OBJECT_PROPERTY_VALUE *object_value)
-            //
-            // It should return the numbers of characters written so we can permute it to a String
-            let enum_val = unsafe { value.type_.Enumerated };
-            let s = match data.object_property {
-                bacnet_sys::BACNET_PROPERTY_ID_PROP_UNITS => {
-                    if enum_val < 256 {
-                        Some(cstr(unsafe { bactext_engineering_unit_name(enum_val) }))
-                    } else {
-                        None
-                    }
-                }
-                bacnet_sys::BACNET_PROPERTY_ID_PROP_OBJECT_TYPE => {
-                    if enum_val < MAX_ASHRAE_OBJECT_TYPE {
-                        Some(cstr(unsafe { bactext_object_type_name(enum_val) }))
-                    } else {
-                        None // Either "reserved" or "proprietary"
-                    }
-                }
-                bacnet_sys::BACNET_PROPERTY_ID_PROP_PRESENT_VALUE
-                | bacnet_sys::BACNET_PROPERTY_ID_PROP_RELINQUISH_DEFAULT => {
-                    if data.object_type < BACnetObjectType_OBJECT_PROPRIETARY_MIN {
-                        Some(cstr(unsafe { bactext_binary_present_value_name(enum_val) }))
-                    } else {
-                        None
-                    }
-                }
-                _ => None,
-            };
-
-            //switch (property) {
-            //    case PROP_PROPERTY_LIST:
-            //        char_str = (char *)bactext_property_name_default(
-            //            value->type.Enumerated, NULL);
-            //        if (char_str) {
-            //            ret_val = snprintf(str, str_len, "%s", char_str);
-            //        } else {
-            //            ret_val = snprintf(str, str_len, "%lu",
-            //                (unsigned long)value->type.Enumerated);
-            //        }
-            //        break;
-            //    case PROP_OBJECT_TYPE:
-            //        if (value->type.Enumerated < MAX_ASHRAE_OBJECT_TYPE) {
-            //            ret_val = snprintf(str, str_len, "%s",
-            //                bactext_object_type_name(
-            //                    value->type.Enumerated));
-            //        } else if (value->type.Enumerated < 128) {
-            //            ret_val = snprintf(str, str_len, "reserved %lu",
-            //                (unsigned long)value->type.Enumerated);
-            //        } else {
-            //            ret_val = snprintf(str, str_len, "proprietary %lu",
-            //                (unsigned long)value->type.Enumerated);
-            //        }
-            //        break;
-            //    case PROP_EVENT_STATE:
-            //        ret_val = snprintf(str, str_len, "%s",
-            //            bactext_event_state_name(value->type.Enumerated));
-            //        break;
-            //    case PROP_UNITS:
-            //        if (value->type.Enumerated < 256) {
-            //            ret_val = snprintf(str, str_len, "%s",
-            //                bactext_engineering_unit_name(
-            //                    value->type.Enumerated));
-            //        } else {
-            //            ret_val = snprintf(str, str_len, "proprietary %lu",
-            //                (unsigned long)value->type.Enumerated);
-            //        }
-            //        break;
-            //    case PROP_POLARITY:
-            //        ret_val = snprintf(str, str_len, "%s",
-            //            bactext_binary_polarity_name(
-            //                value->type.Enumerated));
-            //        break;
-            //    case PROP_PRESENT_VALUE:
-            //    case PROP_RELINQUISH_DEFAULT:
-            //        if (object_type < OBJECT_PROPRIETARY_MIN) {
-            //            ret_val = snprintf(str, str_len, "%s",
-            //                bactext_binary_present_value_name(
-            //                    value->type.Enumerated));
-            //        } else {
-            //            ret_val = snprintf(str, str_len, "%lu",
-            //                (unsigned long)value->type.Enumerated);
-            //        }
-            //        break;
-            //    case PROP_RELIABILITY:
-            //        ret_val = snprintf(str, str_len, "%s",
-            //            bactext_reliability_name(value->type.Enumerated));
-            //        break;
-            //    case PROP_SYSTEM_STATUS:
-            //        ret_val = snprintf(str, str_len, "%s",
-            //            bactext_device_status_name(value->type.Enumerated));
-            //        break;
-            //    case PROP_SEGMENTATION_SUPPORTED:
-            //        ret_val = snprintf(str, str_len, "%s",
-            //            bactext_segmentation_name(value->type.Enumerated));
-            //        break;
-            //    case PROP_NODE_TYPE:
-            //        ret_val = snprintf(str, str_len, "%s",
-            //            bactext_node_type_name(value->type.Enumerated));
-            //        break;
-            //    default:
-            //        ret_val = snprintf(str, str_len, "%lu",
-            //            (unsigned long)value->type.Enumerated);
-            //        break;
-            //}
-
-            BACnetValue::Enum(enum_val, s)
-        }
-        bacnet_sys::BACNET_APPLICATION_TAG_BACNET_APPLICATION_TAG_OBJECT_ID => {
-            // Store the object list, so we can interrogate each object
-
-            let object_type = unsafe { value.type_.Object_Id.type_ };
-            let object_instance = unsafe { value.type_.Object_Id.instance };
-            BACnetValue::ObjectId {
-                object_type,
-                object_instance,
-            }
-        }
-        bacnet_sys::BACNET_APPLICATION_TAG_BACNET_APPLICATION_TAG_DATE => {
-            let date = unsafe { value.type_.Date };
-            BACnetValue::Date {
-                year: date.year,
-                month: date.month,
-                day: date.day,
-                weekday: date.wday,
-            }
-        }
-        _ => {
-            let tag_name = cstr(unsafe { bactext_application_tag_name(value.tag as u32) });
-            return Err(BACnetErr::UnhandledTag {
-                tag_name,
-                tag: value.tag,
-            });
-        }
-    })
 }
 
 #[no_mangle]
@@ -890,6 +791,10 @@ unsafe fn init_service_handlers() {
     apdu_set_confirmed_ack_handler(
         BACnet_Confirmed_Service_Choice_SERVICE_CONFIRMED_READ_PROPERTY,
         Some(my_readprop_ack_handler),
+    );
+    apdu_set_confirmed_simple_ack_handler(
+        BACnet_Confirmed_Service_Choice_SERVICE_CONFIRMED_WRITE_PROPERTY,
+        Some(my_property_simple_ack_handler),
     );
 
     apdu_set_error_handler(

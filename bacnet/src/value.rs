@@ -1,7 +1,7 @@
 use anyhow::anyhow;
 use std::convert::TryInto;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub enum BACnetValue {
     Null, // Yes!
     Bool(bool),
@@ -46,5 +46,31 @@ impl TryInto<u64> for BACnetValue {
             BACnetValue::Uint(u) => u,
             _ => return Err(anyhow!("Cannot turn '{:?}' into a u64", self)),
         })
+    }
+}
+
+impl From<String> for BACnetValue {
+    fn from(raw: String) -> Self {
+        if let Ok(value) = raw.parse::<bool>() {
+            return BACnetValue::Bool(value);
+        }
+
+        if let Ok(value) = raw.parse::<u64>() {
+            return BACnetValue::Uint(value);
+        }
+
+        if let Ok(value) = raw.parse::<i32>() {
+            return BACnetValue::Int(value);
+        }
+
+        if let Ok(value) = raw.parse::<f32>() {
+            return BACnetValue::Real(value);
+        }
+
+        if let Ok(value) = raw.parse::<f64>() {
+            return BACnetValue::Double(value);
+        }
+
+        BACnetValue::String(raw)
     }
 }
