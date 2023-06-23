@@ -86,10 +86,19 @@ fn main() {
 
     match server.connect() {
         Ok(()) => {
+            let object_value = if let BACnetValue::Bool(v) = opt.object_value {
+                BACnetValue::Enum(
+                    if v { 1 } else { 0 },
+                    Some((if v { "active" } else { "inactive" }).to_string()),
+                )
+            } else {
+                opt.object_value
+            };
+
             let r = server.write_prop_at(
                 opt.object_type,
                 opt.object_instance,
-                opt.object_value.clone(),
+                object_value,
                 opt.property,
                 opt.index,
             );

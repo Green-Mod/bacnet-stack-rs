@@ -436,7 +436,13 @@ impl BACnetServer {
         value: BACnetValue,
         property_id: ObjectPropertyId,
     ) -> Result<(), BACnetErr> {
-        self.write_prop_at(object_type, object_instance, value, property_id, 0)
+        self.write_prop_at(
+            object_type,
+            object_instance,
+            value,
+            property_id,
+            BACNET_ARRAY_ALL,
+        )
     }
 
     /// Writes a property at a specific index
