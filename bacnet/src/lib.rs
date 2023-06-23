@@ -412,7 +412,7 @@ impl BACnetServer {
     /// Writes a property
     ///
     /// Only writes the present value (property 85)
-    pub fn write_present_value(
+    pub fn write_prop_present_value(
         &self,
         object_type: ObjectType,
         object_instance: u32,
