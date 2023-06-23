@@ -20,7 +20,7 @@ use bacnet_sys::{
     MAX_MPDU,
 };
 use lazy_static::lazy_static;
-use log::{debug, error};
+use log::{debug, error, trace};
 use std::{
     sync::Mutex,
     time::{Duration, Instant},
@@ -208,7 +208,7 @@ fn whois(timeout: Duration, subnet: Option<u16>) {
 
         i += 1;
     }
-    debug!("Looped {} times", i);
+    trace!("Looped {} times", i);
 
     unsafe {
         bip_cleanup();

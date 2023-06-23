@@ -21,7 +21,7 @@ use bacnet_sys::{
 };
 pub use epics::Epics;
 use lazy_static::lazy_static;
-use log::{debug, error, info, log_enabled, warn};
+use log::{debug, error, info, log_enabled, trace, warn};
 use std::{
     cmp::min,
     collections::HashMap,
@@ -290,7 +290,7 @@ impl BACnetServer {
             }
         };
 
-        debug!("read_prop() finished in {:?}", init.elapsed());
+        trace!("read_prop() finished in {:?}", init.elapsed());
         ret
     }
 
@@ -390,9 +390,8 @@ impl BACnetServer {
                             // If we get a timeout, we'll just return the error
                             return Err(bacnet_err);
                         }
-                        _ => {
-                            warn!("{}", bacnet_err);
-                        }
+                        // If we get another error on a optional property, we'll just ignore it
+                        _ => {}
                     }
                 }
             }
@@ -620,6 +619,10 @@ fn decode_data(data: BACNET_READ_PROPERTY_DATA) -> Result<BACnetValue, BACnetErr
             });
             BACnetValue::String(s)
         }
+        bacnet_sys::BACNET_APPLICATION_TAG_BACNET_APPLICATION_TAG_OCTET_STRING => {
+            let v = unsafe { value.type_.Octet_String };
+            BACnetValue::Bytes(v.value[0..v.length].to_vec())
+        }
         bacnet_sys::BACNET_APPLICATION_TAG_BACNET_APPLICATION_TAG_BIT_STRING => {
             let nbits = unsafe { bitstring_bits_used(&mut value.type_.Bit_String) };
             // info!("Number of bits: {}", nbits);
@@ -756,6 +759,15 @@ fn decode_data(data: BACNET_READ_PROPERTY_DATA) -> Result<BACnetValue, BACnetErr
                 object_instance,
             }
         }
+        bacnet_sys::BACNET_APPLICATION_TAG_BACNET_APPLICATION_TAG_DATE => {
+            let date = unsafe { value.type_.Date };
+            BACnetValue::Date {
+                year: date.year,
+                month: date.month,
+                day: date.day,
+                weekday: date.wday,
+            }
+        }
         _ => {
             let tag_name = cstr(unsafe { bactext_application_tag_name(value.tag as u32) });
             return Err(BACnetErr::UnhandledTag {
@@ -787,10 +799,6 @@ extern "C" fn my_error_handler(
     if let Some(target) = find_matching_server(&mut lock, src, invoke_id) {
         let error_class_str = cstr(unsafe { bactext_error_class_name(error_class) });
         let error_code_str = cstr(unsafe { bactext_error_code_name(error_code) });
-        debug!(
-            "BACnet error: error_class={} ({}) error_code={} ({})",
-            error_class, error_class_str, error_code, error_code_str,
-        );
         let err = BACnetErr::Error {
             class_text: error_class_str,
             class: error_class,
@@ -813,10 +821,6 @@ extern "C" fn my_abort_handler(
     let mut lock = TARGET_ADDRESSES.lock().unwrap();
     if let Some(target) = find_matching_server(&mut lock, src, invoke_id) {
         let abort_text = cstr(unsafe { bactext_abort_reason_name(abort_reason as u32) });
-        debug!(
-            "aborted invoke_id = {} abort_reason = {} ({})",
-            invoke_id, abort_text, abort_reason
-        );
         let err_abort = BACnetErr::Aborted {
             text: abort_text,
             code: abort_reason,

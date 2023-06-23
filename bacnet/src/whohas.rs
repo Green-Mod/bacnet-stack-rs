@@ -24,7 +24,7 @@ use bacnet_sys::{
     BACNET_MAX_INSTANCE, MAX_MPDU,
 };
 use lazy_static::lazy_static;
-use log::{debug, error};
+use log::{debug, error, trace};
 use std::{
     sync::Mutex,
     time::{Duration, Instant},
@@ -237,7 +237,7 @@ fn whohas(object_type: ObjectType, object_instance: u32, timeout: Duration, subn
 
         i += 1;
     }
-    debug!("Looped {} times", i);
+    trace!("Looped {} times", i);
 
     unsafe {
         bip_cleanup();

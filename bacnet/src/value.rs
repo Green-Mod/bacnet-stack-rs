@@ -12,6 +12,12 @@ pub enum BACnetValue {
     String(String), // BACNET_CHARACTER_STRING
     Bytes(Vec<u8>), // BACNET_OCTET_STRING
     BitString(Vec<bool>),
+    Date {
+        year: u16,
+        month: u8,
+        day: u8,
+        weekday: u8,
+    },
     Enum(u32, Option<String>), // Enumerated values also have string representations...
     // A reference to an object, used during interrogation of the device (object-list)
     ObjectId {
