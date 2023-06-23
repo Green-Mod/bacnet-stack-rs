@@ -193,9 +193,9 @@ impl BACnetServer {
         }
     }
 
-    // Read_Property
-    //
-    // Only reads the present value (property 85)
+    /// Reads a property
+    ///
+    /// Only reads the present value (property 85)
     pub fn read_prop_present_value(
         &self,
         object_type: ObjectType,
@@ -208,7 +208,7 @@ impl BACnetServer {
         )
     }
 
-    /// Read a property
+    /// Reads a property
     ///
     /// We call Send_Read_Property_Request, and wait for a result.
     pub fn read_prop(
@@ -220,6 +220,9 @@ impl BACnetServer {
         self.read_prop_at(object_type, object_instance, property_id, BACNET_ARRAY_ALL)
     }
 
+    /// Reads a property at a specific index
+    ///
+    /// We call Send_Read_Property_Request, and wait for a result.
     pub fn read_prop_at(
         &self,
         object_type: ObjectType,
@@ -406,6 +409,39 @@ impl BACnetServer {
         Ok(ret)
     }
 
+    /// Writes a property
+    ///
+    /// Only writes the present value (property 85)
+    pub fn write_present_value(
+        &self,
+        object_type: ObjectType,
+        object_instance: u32,
+        value: BACnetValue,
+    ) -> Result<(), BACnetErr> {
+        self.write_prop(
+            object_type,
+            object_instance,
+            value,
+            BACNET_PROPERTY_ID_PROP_PRESENT_VALUE,
+        )
+    }
+
+    /// Writes a property
+    ///
+    /// We call Send_Write_Property_Request, and wait for a result.
+    pub fn write_prop(
+        &self,
+        object_type: ObjectType,
+        object_instance: u32,
+        value: BACnetValue,
+        property_id: ObjectPropertyId,
+    ) -> Result<(), BACnetErr> {
+        self.write_prop_at(object_type, object_instance, value, property_id, 0)
+    }
+
+    /// Writes a property at a specific index
+    ///
+    /// We call Send_Write_Property_Request, and wait for a result.
     pub fn write_prop_at(
         &self,
         object_type: ObjectType,
