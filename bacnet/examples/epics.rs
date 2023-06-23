@@ -33,7 +33,7 @@ fn main() {
     match server.connect() {
         Ok(()) => match server.epics() {
             Ok(epics) => {
-                println!("Got epics {:#?}", epics);
+                println!("Got epics {:#?}", serde_json::to_string(&epics));
             }
             Err(err) => eprintln!("failed to read property: {}", err),
         },

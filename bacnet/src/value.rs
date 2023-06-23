@@ -1,7 +1,8 @@
 use anyhow::anyhow;
+use serde::{Deserialize, Serialize};
 use std::convert::TryInto;
 
-#[derive(Debug, Clone, PartialEq, PartialOrd)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, PartialOrd)]
 pub enum BACnetValue {
     Null, // Yes!
     Bool(bool),
