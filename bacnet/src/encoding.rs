@@ -255,8 +255,8 @@ pub fn encode_data(value: BACnetValue) -> Result<BACNET_APPLICATION_DATA_VALUE, 
                 data.type_.Character_String.value[..s.len()].copy_from_slice(
                     s.as_bytes()
                         .iter()
-                        .map(|&c| c as i8)
-                        .collect::<Vec<i8>>()
+                        .map(|&c| c as _)
+                        .collect::<Vec<_>>()
                         .as_slice(),
                 );
             }
