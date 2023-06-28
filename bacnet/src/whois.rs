@@ -91,8 +91,11 @@ impl Default for WhoIs {
     }
 }
 
+/// # Safety
+///
+/// This might dereference raw pointers, so it's unsafe.
 #[no_mangle]
-pub extern "C" fn i_am_handler(
+pub unsafe extern "C" fn i_am_handler(
     service_request: *mut u8,
     _service_len: u16,
     src: *mut BACNET_ADDRESS,

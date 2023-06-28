@@ -139,8 +139,11 @@ impl Default for WhoHas {
     }
 }
 
+/// # Safety
+///
+/// This might dereference raw pointers, so it's unsafe.
 #[no_mangle]
-pub extern "C" fn i_have_handler(
+pub unsafe extern "C" fn i_have_handler(
     service_request: *mut u8,
     service_len: u16,
     _: *mut BACNET_ADDRESS,

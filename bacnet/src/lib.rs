@@ -818,6 +818,10 @@ fn find_matching_server<'a>(
     None
 }
 
+/// # Safety
+///
+/// We have to declare this function as unsafe but it's actually safe. The reason is that the
+/// whole function is a callback from the C library and we have to declare it as unsafe.
 pub unsafe fn init_service_handlers() {
     Device_Init(std::ptr::null_mut());
     apdu_set_unconfirmed_handler(
