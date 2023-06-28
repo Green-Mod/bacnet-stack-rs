@@ -159,6 +159,7 @@ fn whois(timeout: Duration, subnet: Option<u16>) {
     }
 
     unsafe {
+        println!("ok here");
         Device_Set_Object_Instance_Number(BACNET_MAX_INSTANCE);
         // service handlers
         Device_Init(std::ptr::null_mut());
@@ -177,6 +178,7 @@ fn whois(timeout: Duration, subnet: Option<u16>) {
         // apdu_set_reject_handler(MyRejectHandler);
         address_init();
         dlenv_init();
+        println!("ok here too");
     }
 
     let mut src = BACNET_ADDRESS::default();
