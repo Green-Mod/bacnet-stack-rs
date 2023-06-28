@@ -9,19 +9,13 @@
 // In effect, this library is not thread-safe, so we need to make sure that only one WhoHas client
 // is running at a time.
 
-use crate::{cstr, ObjectType};
+use crate::{cstr, init_service_handlers, ObjectType, BACNET_STACK_INIT};
 use anyhow::{bail, Result};
 use bacnet_sys::{
-    address_init, apdu_set_confirmed_handler, apdu_set_unconfirmed_handler,
-    apdu_set_unrecognized_service_handler_handler, bactext_object_type_name, bip_cleanup,
-    bip_get_broadcast_address, bip_receive, characterstring_value, dlenv_init,
-    handler_read_property, handler_unrecognized_service, handler_who_is,
-    ihave_decode_service_request, npdu_handler, BACnetObjectType_OBJECT_DEVICE,
-    BACnet_Confirmed_Service_Choice_SERVICE_CONFIRMED_READ_PROPERTY,
-    BACnet_Unconfirmed_Service_Choice_SERVICE_UNCONFIRMED_I_HAVE,
-    BACnet_Unconfirmed_Service_Choice_SERVICE_UNCONFIRMED_WHO_IS, Device_Init,
-    Device_Set_Object_Instance_Number, Send_WhoHas_Object, BACNET_ADDRESS, BACNET_I_HAVE_DATA,
-    BACNET_MAX_INSTANCE, MAX_MPDU,
+    address_init, bactext_object_type_name, bip_cleanup, bip_get_broadcast_address, bip_receive,
+    characterstring_value, dlenv_init, ihave_decode_service_request, npdu_handler,
+    BACnetObjectType_OBJECT_DEVICE, Send_WhoHas_Object, BACNET_ADDRESS, BACNET_I_HAVE_DATA,
+    MAX_MPDU,
 };
 use lazy_static::lazy_static;
 use log::{debug, error, trace};
@@ -146,7 +140,11 @@ impl Default for WhoHas {
 }
 
 #[no_mangle]
-extern "C" fn i_have_handler(service_request: *mut u8, service_len: u16, _: *mut BACNET_ADDRESS) {
+pub extern "C" fn i_have_handler(
+    service_request: *mut u8,
+    service_len: u16,
+    _: *mut BACNET_ADDRESS,
+) {
     let mut data: BACNET_I_HAVE_DATA = BACNET_I_HAVE_DATA::default();
 
     let len =
@@ -182,30 +180,12 @@ fn whohas(object_type: ObjectType, object_instance: u32, timeout: Duration, subn
         }
     }
 
-    unsafe {
-        Device_Set_Object_Instance_Number(BACNET_MAX_INSTANCE);
-        // service handlers
-        Device_Init(std::ptr::null_mut());
-        apdu_set_unconfirmed_handler(
-            BACnet_Unconfirmed_Service_Choice_SERVICE_UNCONFIRMED_WHO_IS,
-            Some(handler_who_is),
-        );
-        apdu_set_unrecognized_service_handler_handler(Some(handler_unrecognized_service));
-        apdu_set_confirmed_handler(
-            BACnet_Confirmed_Service_Choice_SERVICE_CONFIRMED_READ_PROPERTY,
-            Some(handler_read_property),
-        );
-        apdu_set_unconfirmed_handler(
-            BACnet_Unconfirmed_Service_Choice_SERVICE_UNCONFIRMED_I_HAVE,
-            Some(i_have_handler),
-        );
-
-        // FIXME(tj): Set error handlers
-        // apdu_set_abort_handler(MyAbortHandler);
-        // apdu_set_reject_handler(MyRejectHandler);
+    BACNET_STACK_INIT.call_once(|| unsafe {
+        bip_cleanup();
+        init_service_handlers();
         address_init();
         dlenv_init();
-    }
+    });
 
     let mut src = BACNET_ADDRESS::default();
     let mut rx_buf = [0u8; MAX_MPDU as usize];
@@ -238,8 +218,4 @@ fn whohas(object_type: ObjectType, object_instance: u32, timeout: Duration, subn
         i += 1;
     }
     trace!("Looped {} times", i);
-
-    unsafe {
-        bip_cleanup();
-    }
 }

@@ -1,18 +1,19 @@
 use crate::encoding::encode_data;
 use anyhow::{anyhow, Result};
 use bacnet_sys::{
-    address_add, address_bind_request, address_remove_device, apdu_set_abort_handler,
+    address_add, address_bind_request, address_init, address_remove_device, apdu_set_abort_handler,
     apdu_set_confirmed_ack_handler, apdu_set_confirmed_handler,
     apdu_set_confirmed_simple_ack_handler, apdu_set_error_handler, apdu_set_reject_handler,
     apdu_set_unconfirmed_handler, apdu_set_unrecognized_service_handler_handler,
     bacnet_address_same, bactext_abort_reason_name, bactext_error_class_name,
-    bactext_error_code_name, bactext_property_name, bip_receive, dlenv_init, handler_i_am_bind,
+    bactext_error_code_name, bactext_property_name, bip_cleanup, bip_receive, dlenv_init,
     handler_read_property, handler_unrecognized_service, handler_who_is, npdu_handler,
     property_list_special, rp_ack_decode_service_request, special_property_list_t,
     tsm_invoke_id_failed, tsm_invoke_id_free, BACnetObjectType_OBJECT_DEVICE,
     BACnet_Confirmed_Service_Choice_SERVICE_CONFIRMED_READ_PROPERTY,
     BACnet_Confirmed_Service_Choice_SERVICE_CONFIRMED_WRITE_PROPERTY,
     BACnet_Unconfirmed_Service_Choice_SERVICE_UNCONFIRMED_I_AM,
+    BACnet_Unconfirmed_Service_Choice_SERVICE_UNCONFIRMED_I_HAVE,
     BACnet_Unconfirmed_Service_Choice_SERVICE_UNCONFIRMED_WHO_IS, Device_Init,
     Send_Read_Property_Request, Send_Write_Property_Request, BACNET_ADDRESS, BACNET_ARRAY_ALL,
     BACNET_CONFIRMED_SERVICE_ACK_DATA, BACNET_ERROR_CLASS, BACNET_ERROR_CODE, BACNET_OBJECT_TYPE,
@@ -33,6 +34,8 @@ use std::{
 };
 use thiserror::Error;
 use value::BACnetValue;
+use whohas::i_have_handler;
+use whois::i_am_handler;
 
 mod encoding;
 mod epics;
@@ -162,7 +165,9 @@ impl BACnetServer {
 
     pub fn connect(&mut self) -> Result<()> {
         BACNET_STACK_INIT.call_once(|| unsafe {
+            bip_cleanup();
             init_service_handlers();
+            address_init();
             dlenv_init();
         });
         // Add address
@@ -600,9 +605,7 @@ impl BACnetServer {
 
     pub fn disconnect(&self) {
         info!("disconnecting");
-        unsafe {
-            address_remove_device(self.device_id);
-        }
+        unsafe { address_remove_device(self.device_id) };
     }
 }
 
@@ -815,7 +818,7 @@ fn find_matching_server<'a>(
     None
 }
 
-unsafe fn init_service_handlers() {
+pub unsafe fn init_service_handlers() {
     Device_Init(std::ptr::null_mut());
     apdu_set_unconfirmed_handler(
         BACnet_Unconfirmed_Service_Choice_SERVICE_UNCONFIRMED_WHO_IS,
@@ -823,7 +826,11 @@ unsafe fn init_service_handlers() {
     );
     apdu_set_unconfirmed_handler(
         BACnet_Unconfirmed_Service_Choice_SERVICE_UNCONFIRMED_I_AM,
-        Some(handler_i_am_bind),
+        Some(i_am_handler),
+    );
+    apdu_set_unconfirmed_handler(
+        BACnet_Unconfirmed_Service_Choice_SERVICE_UNCONFIRMED_I_HAVE,
+        Some(i_have_handler),
     );
     apdu_set_unrecognized_service_handler_handler(Some(handler_unrecognized_service));
     apdu_set_confirmed_handler(

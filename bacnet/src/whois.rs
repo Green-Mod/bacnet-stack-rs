@@ -9,15 +9,11 @@
 // In effect, this library is not thread-safe, so we need to make sure that only one WhoIs client
 // is running at a time.
 
+use crate::{init_service_handlers, BACNET_STACK_INIT};
 use anyhow::{bail, Result};
 use bacnet_sys::{
-    address_init, apdu_set_confirmed_handler, apdu_set_unconfirmed_handler,
-    apdu_set_unrecognized_service_handler_handler, bip_cleanup, bip_get_broadcast_address,
-    bip_receive, dlenv_init, handler_read_property, iam_decode_service_request, npdu_handler,
-    BACnet_Confirmed_Service_Choice_SERVICE_CONFIRMED_READ_PROPERTY,
-    BACnet_Unconfirmed_Service_Choice_SERVICE_UNCONFIRMED_I_AM, Device_Init,
-    Device_Set_Object_Instance_Number, Send_WhoIs_To_Network, BACNET_ADDRESS, BACNET_MAX_INSTANCE,
-    MAX_MPDU,
+    address_init, bip_cleanup, bip_get_broadcast_address, bip_receive, dlenv_init,
+    iam_decode_service_request, npdu_handler, Send_WhoIs_To_Network, BACNET_ADDRESS, MAX_MPDU,
 };
 use lazy_static::lazy_static;
 use log::{debug, error, trace};
@@ -96,7 +92,11 @@ impl Default for WhoIs {
 }
 
 #[no_mangle]
-extern "C" fn i_am_handler(service_request: *mut u8, _service_len: u16, src: *mut BACNET_ADDRESS) {
+pub extern "C" fn i_am_handler(
+    service_request: *mut u8,
+    _service_len: u16,
+    src: *mut BACNET_ADDRESS,
+) {
     let mut device_id = 0;
     let mut max_apdu = 0;
     let mut segmentation = 0;
@@ -158,28 +158,12 @@ fn whois(timeout: Duration, subnet: Option<u16>) {
         }
     }
 
-    unsafe {
-        println!("ok here");
-        Device_Set_Object_Instance_Number(BACNET_MAX_INSTANCE);
-        // service handlers
-        Device_Init(std::ptr::null_mut());
-        apdu_set_unrecognized_service_handler_handler(None);
-        apdu_set_confirmed_handler(
-            BACnet_Confirmed_Service_Choice_SERVICE_CONFIRMED_READ_PROPERTY,
-            Some(handler_read_property),
-        );
-        apdu_set_unconfirmed_handler(
-            BACnet_Unconfirmed_Service_Choice_SERVICE_UNCONFIRMED_I_AM,
-            Some(i_am_handler),
-        );
-
-        // FIXME(tj): Set error handlers
-        // apdu_set_abort_handler(MyAbortHandler);
-        // apdu_set_reject_handler(MyRejectHandler);
+    BACNET_STACK_INIT.call_once(|| unsafe {
+        bip_cleanup();
+        init_service_handlers();
         address_init();
         dlenv_init();
-        println!("ok here too");
-    }
+    });
 
     let mut src = BACNET_ADDRESS::default();
     let mut rx_buf = [0u8; MAX_MPDU as usize];
@@ -211,8 +195,4 @@ fn whois(timeout: Duration, subnet: Option<u16>) {
         i += 1;
     }
     trace!("Looped {} times", i);
-
-    unsafe {
-        bip_cleanup();
-    }
 }
