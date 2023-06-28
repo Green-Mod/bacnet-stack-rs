@@ -599,6 +599,7 @@ impl BACnetServer {
     }
 
     pub fn disconnect(&self) {
+        info!("disconnecting");
         unsafe {
             address_remove_device(self.device_id);
         }
@@ -607,8 +608,7 @@ impl BACnetServer {
 
 impl Drop for BACnetServer {
     fn drop(&mut self) {
-        info!("disconnecting");
-        unsafe { address_remove_device(self.device_id) };
+        self.disconnect();
     }
 }
 
