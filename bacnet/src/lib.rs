@@ -21,7 +21,7 @@ use bacnet_sys::{
 };
 use encoding::decode_data;
 pub use epics::Epics;
-use errors::BACnetErr;
+use errors::{BACnetErr, Result};
 use log::{debug, error, info, log_enabled, trace, warn};
 use once_cell::sync::Lazy;
 use std::{
@@ -68,7 +68,7 @@ enum RequestStatus {
 struct TargetServer {
     addr: BACNET_ADDRESS,
     request: Option<(RequestInvokeId, RequestStatus)>, // For tracking on-going an ongoing request
-    value: Option<Result<BACnetValue, BACnetErr>>,     // TODO Build this into the 'request status'
+    value: Option<Result<BACnetValue>>,                // TODO Build this into the 'request status'
 }
 
 // As I understand the BACnet stack, it works by acting as another BACnet device on the network.
@@ -93,7 +93,7 @@ impl BACnetServer {
         BACnetServerBuilder::default()
     }
 
-    pub fn connect(&mut self) -> Result<(), BACnetErr> {
+    pub fn connect(&mut self) -> Result<()> {
         BACNET_STACK_INIT.call_once(|| unsafe {
             bip_cleanup();
             init_service_handlers();
@@ -134,7 +134,7 @@ impl BACnetServer {
         &self,
         object_type: ObjectType,
         object_instance: u32,
-    ) -> Result<BACnetValue, BACnetErr> {
+    ) -> Result<BACnetValue> {
         self.read_prop(
             object_type,
             object_instance,
@@ -150,7 +150,7 @@ impl BACnetServer {
         object_type: ObjectType,
         object_instance: u32,
         property_id: ObjectPropertyId,
-    ) -> Result<BACnetValue, BACnetErr> {
+    ) -> Result<BACnetValue> {
         self.read_prop_at(object_type, object_instance, property_id, BACNET_ARRAY_ALL)
     }
 
@@ -163,7 +163,7 @@ impl BACnetServer {
         object_instance: u32,
         property_id: ObjectPropertyId,
         index: u32,
-    ) -> Result<BACnetValue, BACnetErr> {
+    ) -> Result<BACnetValue> {
         let init = std::time::Instant::now();
         const TIMEOUT: u32 = 100;
         let request_invoke_id =
@@ -245,7 +245,7 @@ impl BACnetServer {
         &self,
         object_type: BACNET_OBJECT_TYPE,
         object_instance: u32,
-    ) -> Result<HashMap<ObjectPropertyId, BACnetValue>, BACnetErr> {
+    ) -> Result<HashMap<ObjectPropertyId, BACnetValue>> {
         let mut special_property_list = special_property_list_t::default();
 
         // Fetch all the properties that are known to be required here.
@@ -310,7 +310,7 @@ impl BACnetServer {
                     match bacnet_err {
                         BACnetErr::Aborted { code, .. } if code == 4 => {
                             // code == 4 is "segmentation not supported". This is an array
-                            let len: Result<u64, _> = self
+                            let len = self
                                 .read_prop_at(object_type, object_instance, prop, 0)
                                 .and_then(|x| x.try_into().map_err(|_| BACnetErr::InvalidValue));
 
@@ -351,7 +351,7 @@ impl BACnetServer {
         object_type: ObjectType,
         object_instance: u32,
         value: BACnetValue,
-    ) -> Result<(), BACnetErr> {
+    ) -> Result<()> {
         self.write_prop(
             object_type,
             object_instance,
@@ -369,7 +369,7 @@ impl BACnetServer {
         object_instance: u32,
         value: BACnetValue,
         property_id: ObjectPropertyId,
-    ) -> Result<(), BACnetErr> {
+    ) -> Result<()> {
         self.write_prop_at(
             object_type,
             object_instance,
@@ -389,7 +389,7 @@ impl BACnetServer {
         value: BACnetValue,
         property_id: ObjectPropertyId,
         index: u32,
-    ) -> Result<(), BACnetErr> {
+    ) -> Result<()> {
         let init = std::time::Instant::now();
         const TIMEOUT: u32 = 100;
         let request_invoke_id =
@@ -468,7 +468,7 @@ impl BACnetServer {
     }
 
     /// Scan the server for all available properties and produce an `Epics` object
-    pub fn epics(&self) -> Result<Epics, BACnetErr> {
+    pub fn epics(&self) -> Result<Epics> {
         let device_props = self.read_properties(BACnetObjectType_OBJECT_DEVICE, self.device_id)?;
 
         // Read the object-list

@@ -9,7 +9,10 @@
 // In effect, this library is not thread-safe, so we need to make sure that only one WhoIs client
 // is running at a time.
 
-use crate::{errors::BACnetErr, init_service_handlers, BACNET_STACK_INIT};
+use crate::{
+    errors::{BACnetErr, Result},
+    init_service_handlers, BACNET_STACK_INIT,
+};
 use bacnet_sys::{
     address_init, bip_cleanup, bip_get_broadcast_address, bip_receive, dlenv_init,
     iam_decode_service_request, npdu_handler, Send_WhoIs_To_Network, BACNET_ADDRESS, MAX_MPDU,
@@ -61,7 +64,7 @@ impl WhoIs {
         self
     }
 
-    pub fn execute(self) -> Result<Vec<IAmDevice>, BACnetErr> {
+    pub fn execute(self) -> Result<Vec<IAmDevice>> {
         let WhoIs { timeout, subnet } = self;
 
         // create an object with a Drop impl that calls bip_cleanup

@@ -9,7 +9,11 @@
 // In effect, this library is not thread-safe, so we need to make sure that only one WhoHas client
 // is running at a time.
 
-use crate::{cstr, errors::BACnetErr, init_service_handlers, ObjectType, BACNET_STACK_INIT};
+use crate::{
+    cstr,
+    errors::{BACnetErr, Result},
+    init_service_handlers, ObjectType, BACNET_STACK_INIT,
+};
 use bacnet_sys::{
     address_init, bactext_object_type_name, bip_cleanup, bip_get_broadcast_address, bip_receive,
     characterstring_value, dlenv_init, ihave_decode_service_request, npdu_handler,
@@ -102,7 +106,7 @@ impl WhoHas {
         self
     }
 
-    pub fn execute(self) -> Result<Vec<IHaveData>, BACnetErr> {
+    pub fn execute(self) -> Result<Vec<IHaveData>> {
         let WhoHas {
             object_type,
             object_instance,

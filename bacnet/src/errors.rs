@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-#[derive(Debug, Error)]
+#[derive(Eq, PartialEq, Debug, Error, Clone)]
 pub enum BACnetErr {
     #[error("Rejected: code {code}")]
     Rejected { code: u8 }, // Rejected with the given reason code
@@ -46,3 +46,5 @@ pub enum BACnetErr {
     #[error("Couldn't get lock")]
     CouldntGetLock,
 }
+
+pub type Result<T> = ::std::result::Result<T, BACnetErr>;

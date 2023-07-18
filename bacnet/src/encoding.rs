@@ -1,4 +1,4 @@
-use crate::{cstr, value::BACnetValue, BACnetErr};
+use crate::{cstr, errors::Result, value::BACnetValue, BACnetErr};
 use bacnet_sys::{
     bacapp_decode_application_data, bactext_application_tag_name,
     bactext_binary_present_value_name, bactext_engineering_unit_name, bactext_object_type_name,
@@ -8,7 +8,7 @@ use bacnet_sys::{
     MAX_ASHRAE_OBJECT_TYPE,
 };
 
-pub fn decode_data(data: BACNET_READ_PROPERTY_DATA) -> Result<BACnetValue, BACnetErr> {
+pub fn decode_data(data: BACNET_READ_PROPERTY_DATA) -> Result<BACnetValue> {
     let mut value = BACNET_APPLICATION_DATA_VALUE::default();
     let appdata = data.application_data;
     let appdata_len = data.application_data_len;
@@ -206,7 +206,7 @@ pub fn decode_data(data: BACNET_READ_PROPERTY_DATA) -> Result<BACnetValue, BACne
     })
 }
 
-pub fn encode_data(value: BACnetValue) -> Result<BACNET_APPLICATION_DATA_VALUE, BACnetErr> {
+pub fn encode_data(value: BACnetValue) -> Result<BACNET_APPLICATION_DATA_VALUE> {
     let mut data = BACNET_APPLICATION_DATA_VALUE {
         context_specific: false,
         ..Default::default()
