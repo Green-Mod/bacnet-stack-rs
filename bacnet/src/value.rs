@@ -1,4 +1,4 @@
-use anyhow::anyhow;
+use crate::errors::BACnetErr;
 use serde::{Deserialize, Serialize};
 use std::convert::TryInto;
 
@@ -29,23 +29,23 @@ pub enum BACnetValue {
 }
 
 impl TryInto<String> for BACnetValue {
-    type Error = anyhow::Error;
+    type Error = BACnetErr;
     fn try_into(self) -> Result<String, Self::Error> {
         Ok(match self {
             BACnetValue::String(s) => s,
             BACnetValue::Enum(_, Some(s)) => s,
             BACnetValue::Enum(i, None) => format!("{}", i),
-            _ => return Err(anyhow!("Cannot turn '{:?}' into a string", self)),
+            _ => return Err(BACnetErr::EncodeFailed),
         })
     }
 }
 
 impl TryInto<u64> for BACnetValue {
-    type Error = anyhow::Error;
+    type Error = BACnetErr;
     fn try_into(self) -> Result<u64, Self::Error> {
         Ok(match self {
             BACnetValue::Uint(u) => u,
-            _ => return Err(anyhow!("Cannot turn '{:?}' into a u64", self)),
+            _ => return Err(BACnetErr::DecodeFailed),
         })
     }
 }

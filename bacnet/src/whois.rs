@@ -9,24 +9,19 @@
 // In effect, this library is not thread-safe, so we need to make sure that only one WhoIs client
 // is running at a time.
 
-use crate::{init_service_handlers, BACNET_STACK_INIT};
-use anyhow::{bail, Result};
+use crate::{errors::BACnetErr, init_service_handlers, BACNET_STACK_INIT};
 use bacnet_sys::{
     address_init, bip_cleanup, bip_get_broadcast_address, bip_receive, dlenv_init,
     iam_decode_service_request, npdu_handler, Send_WhoIs_To_Network, BACNET_ADDRESS, MAX_MPDU,
 };
-use lazy_static::lazy_static;
 use log::{debug, error, trace};
+use once_cell::sync::Lazy;
 use std::{
     sync::Mutex,
     time::{Duration, Instant},
 };
 
-lazy_static! {
-    /// A global list of discovered devices. The function my_i_am_handler() pushes discovered
-    /// devices here.
-    static ref DISCOVERED_DEVICES: Mutex<Vec<IAmDevice>> = Mutex::new(vec![]);
-}
+static DISCOVERED_DEVICES: Lazy<Mutex<Vec<IAmDevice>>> = Lazy::new(|| Mutex::new(vec![]));
 
 /// A BACnet device that responded with I-Am in response to the Who-Is we sent out.
 pub struct IAmDevice {
@@ -66,7 +61,7 @@ impl WhoIs {
         self
     }
 
-    pub fn execute(self) -> Result<Vec<IAmDevice>> {
+    pub fn execute(self) -> Result<Vec<IAmDevice>, BACnetErr> {
         let WhoIs { timeout, subnet } = self;
 
         // create an object with a Drop impl that calls bip_cleanup
@@ -75,7 +70,7 @@ impl WhoIs {
         let devices = if let Ok(mut lock) = DISCOVERED_DEVICES.lock() {
             lock.drain(..).collect()
         } else {
-            bail!("unable to lock DISCOVERED_DEVICES");
+            return Err(BACnetErr::CouldntGetLock);
         };
 
         Ok(devices)

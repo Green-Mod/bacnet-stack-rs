@@ -9,26 +9,21 @@
 // In effect, this library is not thread-safe, so we need to make sure that only one WhoHas client
 // is running at a time.
 
-use crate::{cstr, init_service_handlers, ObjectType, BACNET_STACK_INIT};
-use anyhow::{bail, Result};
+use crate::{cstr, errors::BACnetErr, init_service_handlers, ObjectType, BACNET_STACK_INIT};
 use bacnet_sys::{
     address_init, bactext_object_type_name, bip_cleanup, bip_get_broadcast_address, bip_receive,
     characterstring_value, dlenv_init, ihave_decode_service_request, npdu_handler,
     BACnetObjectType_OBJECT_DEVICE, Send_WhoHas_Object, BACNET_ADDRESS, BACNET_I_HAVE_DATA,
     MAX_MPDU,
 };
-use lazy_static::lazy_static;
 use log::{debug, error, trace};
+use once_cell::sync::Lazy;
 use std::{
     sync::Mutex,
     time::{Duration, Instant},
 };
 
-lazy_static! {
-    /// A global list of discovered devices. The function my_i_am_handler() pushes discovered
-    /// devices here.
-    static ref DISCOVERED_DEVICES: Mutex<Vec<IHaveData>> = Mutex::new(vec![]);
-}
+static DISCOVERED_DEVICES: Lazy<Mutex<Vec<IHaveData>>> = Lazy::new(|| Mutex::new(vec![]));
 
 pub struct ObjectId {
     pub object_type: ObjectType,
@@ -107,7 +102,7 @@ impl WhoHas {
         self
     }
 
-    pub fn execute(self) -> Result<Vec<IHaveData>> {
+    pub fn execute(self) -> Result<Vec<IHaveData>, BACnetErr> {
         let WhoHas {
             object_type,
             object_instance,
@@ -121,7 +116,7 @@ impl WhoHas {
         let devices = if let Ok(mut lock) = DISCOVERED_DEVICES.lock() {
             lock.drain(..).collect()
         } else {
-            bail!("unable to lock DISCOVERED_DEVICES");
+            return Err(BACnetErr::CouldntGetLock);
         };
 
         Ok(devices)

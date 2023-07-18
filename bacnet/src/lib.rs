@@ -1,5 +1,4 @@
 use crate::encoding::encode_data;
-use anyhow::{anyhow, Result};
 use bacnet_sys::{
     address_add, address_bind_request, address_init, address_remove_device, apdu_set_abort_handler,
     apdu_set_confirmed_ack_handler, apdu_set_confirmed_handler,
@@ -22,8 +21,9 @@ use bacnet_sys::{
 };
 use encoding::decode_data;
 pub use epics::Epics;
-use lazy_static::lazy_static;
+use errors::BACnetErr;
 use log::{debug, error, info, log_enabled, trace, warn};
+use once_cell::sync::Lazy;
 use std::{
     cmp::min,
     collections::HashMap,
@@ -32,13 +32,13 @@ use std::{
     os::raw::c_char,
     sync::{Mutex, Once},
 };
-use thiserror::Error;
 use value::BACnetValue;
 use whohas::i_have_handler;
 use whois::i_am_handler;
 
 mod encoding;
 mod epics;
+pub mod errors;
 pub mod value;
 pub mod whohas;
 pub mod whois;
@@ -49,84 +49,14 @@ type RequestInvokeId = u8;
 type DeviceId = u32;
 
 // We need a global structure here for collecting "target addresses"
-lazy_static! {
-    /// Global tracking struct for target addresses. These are servers that we consider ourselves
-    /// connected to and communicating with.
-    static ref TARGET_ADDRESSES: Mutex<HashMap<DeviceId, TargetServer>> = Mutex::new(HashMap::new());
-}
-
-//// Epics property list
-//lazy_static! {
-//    static ref PROPERTY_LIST: Mutex<
-//}
-//
-//struct PropertyList {
-//    length: u32,
-//    index: u32,
-//    list: [130; i32],
-//}
+static TARGET_ADDRESSES: Lazy<Mutex<HashMap<DeviceId, TargetServer>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
 
 // Status of a request
 enum RequestStatus {
     Ongoing,          // No reply has been received yet
     Done,             // Successfully completed
     Error(BACnetErr), // Request failed
-}
-
-#[derive(Debug, Error)]
-pub enum BACnetErr {
-    /// Request was rejected with the given reason code
-    #[error("Rejected: code {code}")]
-    Rejected { code: u8 }, // Rejected with the given reason code
-
-    /// Request was aborted with the given reason code and text
-    #[error("Aborted: {text} (code {code})")]
-    Aborted { text: String, code: u8 },
-
-    /// Request resulted in an error
-    #[error("Error: class={class_text} ({class}) {text} ({code})")]
-    Error {
-        class_text: String,
-        class: u32,
-        text: String,
-        code: u32,
-    },
-
-    /// Request is still ongoing
-    #[error("Request is still ongoing")]
-    RequestOngoing,
-
-    /// No value was extracted
-    #[error("No value was extracted")]
-    NoValue,
-
-    /// Invalid value was extracted
-    #[error("Invalid value was extracted")]
-    InvalidValue,
-
-    /// Not connected to server
-    #[error("Not connected to server with Device ID {device_id}")]
-    NotConnected { device_id: u32 },
-
-    /// TSM Timeout
-    #[error("TSM Timeout")]
-    TsmTimeout,
-
-    /// APDU Timeout
-    #[error("APDU Timeout")]
-    ApduTimeout,
-
-    /// Decoding failed
-    #[error("Decoding failed")]
-    DecodeFailed,
-
-    /// Encode failed
-    #[error("Encode failed")]
-    EncodeFailed,
-
-    /// Unhandled tag type
-    #[error("Unhandled type tag {tag_name} ({tag:?})")]
-    UnhandledTag { tag_name: String, tag: u8 },
 }
 
 // A structure for tracking
@@ -163,7 +93,7 @@ impl BACnetServer {
         BACnetServerBuilder::default()
     }
 
-    pub fn connect(&mut self) -> Result<()> {
+    pub fn connect(&mut self) -> Result<(), BACnetErr> {
         BACNET_STACK_INIT.call_once(|| unsafe {
             bip_cleanup();
             init_service_handlers();
@@ -191,10 +121,9 @@ impl BACnetServer {
             );
             Ok(())
         } else {
-            Err(anyhow!(
-                "Failed to bind to the server with Device ID {}",
-                self.device_id
-            ))
+            Err(BACnetErr::NotConnected {
+                device_id: self.device_id,
+            })
         }
     }
 
