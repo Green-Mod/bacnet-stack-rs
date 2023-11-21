@@ -5,6 +5,8 @@ bacnet-stack-rs
 
 The folder `bacnet-sys/bacnet-stack` contains the submodule of the original C library.
 
----
-
 Also, this repository is kind of a fork of [this other one](https://github.com/omnioiot/bacnet-stack-rs), updated to the latest version of Rust and bacnet-stack.
+
+# Updating the stack
+
+To update the stack, you need to update the submodule `bacnet-stack` to the latest commit, always check if cargo can still build the project, with `cargo build`, and then run `cargo test` to check if the tests are still passing.
