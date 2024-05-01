@@ -308,7 +308,7 @@ impl BACnetServer {
                 }
                 Err(bacnet_err) => {
                     match bacnet_err {
-                        BACnetErr::Aborted { code, .. } if code == 4 => {
+                        BACnetErr::Aborted { code: 4, .. } => {
                             // code == 4 is "segmentation not supported". This is an array
                             let len = self
                                 .read_prop_at(object_type, object_instance, prop, 0)
