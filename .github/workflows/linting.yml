@@ -19,6 +19,8 @@ jobs:
 
       - name: Install nightly toolchain
         uses: dtolnay/rust-toolchain@nightly
+        with:
+          toolchain: 1.83.0
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
@@ -40,6 +42,7 @@ jobs:
         uses: dtolnay/rust-toolchain@nightly
         with:
           components: rustfmt
+          toolchain: 1.83.0
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
@@ -61,6 +64,7 @@ jobs:
         uses: dtolnay/rust-toolchain@nightly
         with:
           components: clippy
+          toolchain: 1.83.0
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
